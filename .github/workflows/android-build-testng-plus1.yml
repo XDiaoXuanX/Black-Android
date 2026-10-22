@@ -1,0 +1,255 @@
+name: Android Build (Legacy++)
+
+on:
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: 'Version name (e.g., v2.0.0)'
+        required: true
+        type: string
+        default: ''
+      applicationId:
+        description: 'Application ID (e.g., com.racas.black)'
+        required: false
+        default: "com.racas.black"
+        type: choice
+        options:
+          - com.racas.black
+          - com.racas.black.custom
+          - com.racas.black.turnip
+          - com.antutu.ABenchMark
+      build_type:
+        description: "Build type"
+        required: true
+        default: "release"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: platforms/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      # NDK/CMake versi mengikuti batch (28.2.13676358 + 3.31.6), + ninja + clang
+      - name: Install NDK + CMake + ninja + clang
+        run: |
+          yes | sdkmanager "ndk;28.2.13676358" "cmake;3.31.6" >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang
+
+      - name: Set versionName in build.gradle.kts
+        run: |
+          VN="${{ github.event.inputs.versionName }}"
+          sed -i 's/versionName = ".*"/versionName = "'"$VN"'"/' app/build.gradle.kts
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # ===== [1/5] Tools: build recompiler =====
+      - name: Build recompiler tools
+        run: |
+          set -e
+          TOOLS="${{ github.workspace }}/out/build/android-tools"
+          rm -rf "$TOOLS"
+          cmake -S tools -B "$TOOLS" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build "$TOOLS"
+
+      # ===== [2/5] XBE: siapkan assets/default.xbe =====
+      - name: Prepare game XBE
+        run: |
+          set -e
+          GAME_XBE="default.xbe"
+          if [ -f "assets/$GAME_XBE" ]; then
+            echo "Found assets/$GAME_XBE"
+            exit 0
+          fi
+          ISO=""
+          for f in assets/*.iso iso/*.iso; do
+            [ -f "$f" ] && ISO="$f" && break
+          done
+          if [ -z "$ISO" ]; then
+            echo "ERROR: assets/$GAME_XBE not found and no ISO in assets/ or iso/"
+            exit 1
+          fi
+          echo "Extracting $GAME_XBE from $ISO"
+          mkdir -p assets
+          python3 tools/xdvdfs.py "$ISO" "$GAME_XBE" "assets/$GAME_XBE"
+
+      # ===== [3/5] + [4/5] Recompile: symbols + xbe_recomp =====
+      - name: Recompile game
+        run: |
+          set -e
+          TOOLS="${{ github.workspace }}/out/build/android-tools"
+          SDK="$(cat "$TOOLS/sdk_dir.txt")"
+          echo "SDK dir: $SDK"
+
+          if ! grep -q '^\[symbols\]' config/game.toml 2>/dev/null; then
+            echo "Generating symbols in config/game.toml"
+            "$TOOLS/xbe_symbols" assets/default.xbe "$SDK/xdk" --out config/game.toml
+          fi
+
+          echo "Recompiling default.xbe into generated/game"
+          "$TOOLS/xbe_recomp" config/game.toml --xdk "$SDK/xdk"
+
+      # ===== [5/5] Build APK (assembleRelease, tanpa flavor) =====
+      - name: Build APK
+        id: build
+        run: |
+          set -e
+          ROOT_DIR="${{ github.workspace }}/Black-Android/app"
+
+          VN="${{ github.event.inputs.versionName }}"
+          VC="${{ github.run_number }}"
+          APP_ID="${{ github.event.inputs.applicationId }}"
+          [ -z "$APP_ID" ] && APP_ID="com.racas.black"
+
+          if [ ! -f local.properties ]; then
+            echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          fi
+
+          ./gradlew assembleRelease \
+            -Parmsx2.ndkVersion="28.2.13676358" \
+            -Parmsx2.applicationId="$APP_ID" \
+            -Parmsx2.versionCode="$VC" \
+            -Parmsx2.versionName="$VN" \
+            -Parmsx2.minSdk=26 \
+            --stacktrace
+
+          BUILT="$ROOT_DIR/app/build/outputs/apk/release/app-release.apk"
+          [[ -f "$BUILT" ]] || { echo "FATAL: Gradle did not produce APK at $BUILT" >&2; exit 1; }
+
+          FINAL_APK="BLACK-${VN}-legacy-armv8.0-sdk26.apk"
+          OUTDIR="$ROOT_DIR/app/build/outputs/apk/legacy"
+          mkdir -p "$OUTDIR"
+
+          BUILD_TOOLS_DIR="$(ls -d "${ANDROID_HOME}/build-tools/"*/ | sort -V | tail -1)"
+          ZIPALIGN="${BUILD_TOOLS_DIR}/zipalign"
+
+          WORK="$ROOT_DIR/app/build/nightly"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          cp -f "$BUILT" "$WORK/unsigned.apk"
+          zip -qd "$WORK/unsigned.apk" "META-INF/*" >/dev/null 2>&1 || true
+          "$ZIPALIGN" -f -P 16 4 "$WORK/unsigned.apk" "$WORK/aligned.apk"
+          cp -f "$WORK/aligned.apk" "$OUTDIR/$FINAL_APK"
+
+          echo "FINAL_APK=$FINAL_APK" >> $GITHUB_OUTPUT
+          echo "OUTDIR=$OUTDIR" >> $GITHUB_OUTPUT
+          echo "versionName=$VN" >> $GITHUB_OUTPUT
+          echo "applicationId=$APP_ID" >> $GITHUB_OUTPUT
+
+      # ===== Sign the APK (only for release builds) =====
+      - name: Sign release APK
+        if: github.event.inputs.build_type == 'release'
+        run: |
+          set -e
+          KEYSTORE_PATH="${HOME}/.android/release.keystore"
+          KEY_ALIAS="black-ci"
+          KS_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}"
+          KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}"
+          if [ -z "$KS_PASSWORD" ]; then
+            echo "WARNING: No keystore password secret set - using temporary insecure password." >&2
+            KS_PASSWORD="black-ci-temp"
+            KEY_PASSWORD="black-ci-temp"
+          fi
+
+          mkdir -p "${HOME}/.android"
+          if [ ! -f "$KEYSTORE_PATH" ]; then
+            echo "Generating CI keystore for signing..."
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype PKCS12 \
+              -alias "$KEY_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KS_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              -dname "CN=ARMSX2 CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              2>/dev/null
+          fi
+
+          BUILD_TOOLS_DIR="$(ls -d "${ANDROID_HOME}/build-tools/"*/ | sort -V | tail -1)"
+          APK_PATH="${{ steps.build.outputs.OUTDIR }}/${{ steps.build.outputs.FINAL_APK }}"
+
+          echo "Signing APK: ${APK_PATH}"
+          "${BUILD_TOOLS_DIR}/apksigner" sign \
+            --ks "$KEYSTORE_PATH" \
+            --ks-pass "pass:${KS_PASSWORD}" \
+            --key-pass "pass:${KEY_PASSWORD}" \
+            --ks-key-alias "$KEY_ALIAS" \
+            "$APK_PATH"
+
+          echo "Verifying signature..."
+          "${BUILD_TOOLS_DIR}/apksigner" verify --verbose "$APK_PATH"
+
+      # ===== GitHub Release steps =====
+      - name: Set up GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install gh -y
+
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Create Git Tag
+        id: create_tag
+        run: |
+          set -e
+          VN="${{ steps.build.outputs.versionName }}"
+          TAG="${VN}-build.${{ github.run_number }}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Alpha build ${{ github.run_number }}"
+          git push origin "${TAG}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.create_tag.outputs.tag }}
+          name: Alpha ${{ steps.create_tag.outputs.tag }}
+          body: |
+            ## Black Android Alpha Build (Alpha)
+            **Only Testing & We have never collaborated with anyone.**
+            - Version: ${{ steps.build.outputs.versionName }}
+            - Application ID: ${{ steps.build.outputs.applicationId }}
+            - Build number: ${{ github.run_number }}
+            - Commit: ${{ github.sha }}
+            - Short SHA: ${{ github.sha }}
+            - Triggered by: ${{ github.actor }}
+            - Build type: ${{ github.event.inputs.build_type }}
+          files: |
+            ${{ steps.build.outputs.OUTDIR }}/${{ steps.build.outputs.FINAL_APK }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
