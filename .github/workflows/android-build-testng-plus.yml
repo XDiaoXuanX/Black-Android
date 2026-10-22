@@ -1,0 +1,73 @@
+
+name: Android CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 300
+    env:
+      NDK_VERSION: 28.2.13676358
+      CMAKE_VERSION: 3.31.6
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Android SDK packages
+        shell: cmd
+        run: call "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" --install "platforms;android-34" "ndk;%NDK_VERSION%" "cmake;%CMAKE_VERSION%" >nul
+
+      - name: Decrypt default.xbe
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          XBE_KEY: ${{ secrets.XBE_KEY }}
+        run: |
+          if [ -z "$XBE_KEY" ]; then
+            echo "::error::The XBE_KEY secret is missing"
+            exit 1
+          fi
+          mkdir -p assets
+          key="$RUNNER_TEMP/xbe.key"
+          printf '%s' "$XBE_KEY" > "$key"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in ci/default.xbe.enc -out assets/default.xbe \
+            -pass "file:$key"
+          rm -f "$key"
+
+      - name: Build APK
+        if: github.event_name == 'push'
+        shell: cmd
+        run: call build.bat
+      - name: Upload recompiler diagnostics
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Black-Recompiler-Diagnostics
+          path: generated/game/x86_func_mapping.cpp
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Black-Android-APK
+          path: |
+            app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 7
