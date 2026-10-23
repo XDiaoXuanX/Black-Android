@@ -6,7 +6,9 @@
 name: Build Black
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: write
