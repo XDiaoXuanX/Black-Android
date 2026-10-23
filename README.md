@@ -46,6 +46,7 @@ The settings are in the game's own options menu, each page under its own button:
 - **Menus**: a D-pad and a back button move through the menus and the options; tap an arrow to step one row, or hold it to keep going.
 - **Touch Sensitivity**: how fast a drag turns the view, separate from the mouse's sensitivity.
 - **Controls Layout**: pick a preset (*Default*, *3 Finger* or *4 Finger*) and set the controls' opacity and overall size.
+- **Button Style**: *Xbox* (the skin's icons with the Xbox controller's A, B, X, Y and other button marks), *Clean* (the same icons without them) or *Classic* (the original drawn icons).
 - **Edit Controls Position**: drag each control where you want it. To resize one, select it and tap **−** or **+**, or pinch it with a second finger.
 - **Motion Controls**: aim with the gyroscope by turning the phone, or a DualShock 4 or DualSense on Android 12 and newer, either always or only while firing, with adjustable sensitivity. The controller's gyroscope is used while you play with the controller, the phone's while you use the touch screen.
 
@@ -99,6 +100,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 ## Credits
 - [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482: the static recompiler and the portable runtime (Xbox kernel, XDK libraries and Direct3D 8) this port is built on.
 - [SDL](https://github.com/libsdl-org/SDL), [glslang](https://github.com/KhronosGroup/glslang), [toml++](https://github.com/marzer/tomlplusplus) and [Dear ImGui](https://github.com/ocornut/imgui).
+- [bagasromadon](https://github.com/bagasromadon): the touch controls' button skin.
 - [xemu](https://github.com/xemu-project/xemu) and [Cxbx-Reloaded](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded), which XboxXBE-Recomp used as references for Xbox hardware and API behavior.
 
 *Black* is a trademark of its respective owners. This project is not affiliated with or endorsed by them.

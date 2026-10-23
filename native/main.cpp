@@ -25,6 +25,7 @@
 
 #include "app/app.h"
 #include "build_info.h"
+#include "common/options.h"
 #include "core/input.h"
 #include "core/log.h"
 #include "host.h"
@@ -239,8 +240,10 @@ bool Widescreen() {
     return m.width * 2 >= m.height * 3;  // 3:2 or wider
 }
 
+// SSAA renders twice as wide and high, the present averaging each 2x2 back to a pixel
 float RenderScale(uint32_t guest_height) {
-    float h = Output().height * (Get().render_percent / 100.0f);
+    float ssaa = game::Opt().anti_aliasing == 2 ? 2.0f : 1.0f;
+    float h = Output().height * (Get().render_percent / 100.0f) * ssaa;
     return guest_height ? std::max(h / guest_height, 0.1f) : 1.0f;
 }
 

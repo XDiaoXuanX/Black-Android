@@ -14,7 +14,10 @@ if(EXISTS ${REPO}/sdk/cmake/XbeRecomp.cmake)
 elseif(EXISTS ${REPO}/../XboxXBE-Recomp/cmake/XbeRecomp.cmake)
     get_filename_component(SDK ${REPO}/../XboxXBE-Recomp ABSOLUTE)
 else()
-    FetchContent_Declare(xbe_sdk GIT_REPOSITORY https://github.com/TGP482/XboxXBE-Recomp.git GIT_TAG main)
+    # pinned: the SDK's main moved to game code built into a DLL at first start (Windows), which this port's
+    # recompiler step and libmain.so do not take; this is the commit v1.5.0 was built with
+    FetchContent_Declare(xbe_sdk GIT_REPOSITORY https://github.com/TGP482/XboxXBE-Recomp.git
+                         GIT_TAG 99078b119b5d5e0d1d6afb1390e29437c0c984c0)
     FetchContent_MakeAvailable(xbe_sdk)
     set(SDK ${xbe_sdk_SOURCE_DIR})
 endif()

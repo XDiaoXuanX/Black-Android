@@ -32,7 +32,7 @@ There are no tests or linters in this repo.
 
 ## Where the SDK comes from
 
-Both `CMakeLists.txt` files look for the SDK in this order: `sdk/` in the repo, then `../XboxXBE-Recomp` beside the repo. If neither exists, they FetchContent the SDK's `main` branch. A sibling checkout lets you read or change the runtime (`<sdk>/runtime/{app,core,kernel,xdk,gpu,audio}`), whose headers (`app/app.h`, `kernel/kernel.h`, `xdk/hle.h`, `core/input.h`, ...) the host code includes. Gradle's `fetchSDL` task shallow-clones SDL `release-3.4.16` into `third_party/SDL`. Its Java sources go into the APK and its C side becomes `libSDL3.so`. glslang, toml++ and imgui are fetched by CMake.
+Both `CMakeLists.txt` files look for the SDK in this order: `sdk/` in the repo, then `../XboxXBE-Recomp` beside the repo. If neither exists, they FetchContent the SDK at a pinned commit, the one v1.5.0 was built with: the SDK's `main` has since moved to game code built into a DLL at first start, which this port doesn't take. A sibling checkout lets you read or change the runtime (`<sdk>/runtime/{app,core,kernel,xdk,gpu,audio}`), whose headers (`app/app.h`, `kernel/kernel.h`, `xdk/hle.h`, `core/input.h`, ...) the host code includes. Gradle's `fetchSDL` task shallow-clones SDL `release-3.4.16` into `third_party/SDL`. Its Java sources go into the APK and its C side becomes `libSDL3.so`. glslang, toml++ and imgui are fetched by CMake.
 
 ## Architecture
 

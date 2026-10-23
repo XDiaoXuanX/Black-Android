@@ -1,6 +1,7 @@
 #pragma once
 // What the Android host's parts share: the window, the app's lifecycle and the event routing
 #include <cstdint>
+#include <vector>
 
 union SDL_Event;
 struct SDL_Window;
@@ -54,6 +55,11 @@ void StepOpacity(int step);
 uint32_t ControlsSize();  // percent of each control's own size
 void StepSize(int step);
 void EditLayout();  // the controls over the screen to drag where they go
+const char* SkinName();  // the buttons' look: CLASSIC (drawn), XBOX or CLEAN (the skin's images)
+void StepSkin(int step);
+// render thread, once: the skins' atlas as RGBA from the APK's assets, then its ImGui texture
+bool LoadSkin(std::vector<uint8_t>& rgba, uint32_t& w, uint32_t& h);
+void SetSkinTexture(uint64_t texture);
 }  // namespace touch
 
 // aiming by turning the phone (gyro.cpp), main thread

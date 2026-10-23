@@ -1,7 +1,10 @@
 // The game on Android: its files or a disc image (.iso) in the Black folder on the phone's storage or on an SD card
 // (all files access granted) or in the app's own assets folder. The xbe must be the one this build was recompiled from; the Europe xbe
 // is turned into the US one by src/common/europe.patch, linked into the library.
+#include <jni.h>
+
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_system.h>
 
 #include <algorithm>
 #include <cctype>
@@ -38,17 +41,52 @@ namespace fs = std::filesystem;
 constexpr const char* kShared = "/storage/emulated/0/Black";
 constexpr const char* kVolumes = "/storage";
 
+// the Black folders BlackActivity has from Android's storage volumes, which some phones don't show in /storage
+std::vector<fs::path> ActivityCardFolders() {
+    std::vector<fs::path> out;
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return out;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID m = env->GetMethodID(cls, "cardFolderPaths", "()[Ljava/lang/String;");
+    auto paths = m ? static_cast<jobjectArray>(env->CallObjectMethod(activity, m)) : nullptr;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        paths = nullptr;
+    }
+    for (jsize i = 0, n = paths ? env->GetArrayLength(paths) : 0; i < n; i++) {
+        auto s = static_cast<jstring>(env->GetObjectArrayElement(paths, i));
+        if (!s) continue;
+        const char* c = env->GetStringUTFChars(s, nullptr);
+        if (c) {
+            out.emplace_back(c);
+            env->ReleaseStringUTFChars(s, c);
+        }
+        env->DeleteLocalRef(s);
+    }
+    if (paths) env->DeleteLocalRef(paths);
+    env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(activity);
+    return out;
+}
+
 // the Black folder on each SD card or USB stick Android has mounted, /storage/<volume id>/Black; all files access
 // reads them as it does the phone's own storage
 std::vector<fs::path> RemovableFolders() {
-    std::vector<fs::path> out;
-    std::error_code ec;
+    std::vector<fs::path> out = ActivityCardFolders();
+    std::error_code ec, dir_ec;
     for (auto& e : fs::directory_iterator(kVolumes, ec)) {
         std::string name = e.path().filename().string();
-        if (name == "emulated" || name == "self" || !e.is_directory(ec)) continue;
+        if (name == "emulated" || name == "self" || !e.is_directory(dir_ec)) continue;
         out.push_back(e.path() / "Black");
     }
+    static bool logged = false;
+    if (ec && !logged) {
+        LOGW("game: %s cannot be listed: %s", kVolumes, ec.message().c_str());
+        logged = true;
+    }
     std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
 }
 
@@ -234,18 +272,41 @@ void WaitForGame() {
     }
 }
 
-bool AskOtherRelease(const fs::path& name) {
+// the xbes of other releases the player chose to always start, one sha1 a line, so the question is not asked again
+fs::path AllowedFile() { return ExeDir() / "other_releases.txt"; }
+
+bool AllowedRelease(const std::string& sha) {
+    std::ifstream f(AllowedFile());
+    for (std::string line; std::getline(f, line);)
+        if (line == sha) return true;
+    return false;
+}
+
+void AllowRelease(const std::string& sha) {
+    std::ofstream f(AllowedFile(), std::ios::app);
+    f << sha << "\n";
+    if (!f) LOGW("game: %s cannot be written", AllowedFile().string().c_str());
+}
+
+bool AskOtherRelease(const fs::path& name, const std::string& sha) {
+    if (AllowedRelease(sha)) {
+        LOGR("Game: another release, started without asking as the player chose");
+        return true;
+    }
     std::string text = name.filename().string() +
                        " is a different release of the game than this build was made from, and will most likely "
                        "crash.\n\nStart it anyway?";
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "No"},
         {0, 1, "Yes"},
+        {0, 2, "Yes, don't ask again"},
     };
     std::string title = Utf8(kGame.short_title);
-    SDL_MessageBoxData box{SDL_MESSAGEBOX_WARNING, nullptr, title.c_str(), text.c_str(), 2, buttons, nullptr};
+    SDL_MessageBoxData box{SDL_MESSAGEBOX_WARNING, nullptr, title.c_str(), text.c_str(), 3, buttons, nullptr};
     int answer = 0;
-    return SDL_ShowMessageBox(&box, &answer) && answer == 1;
+    if (!SDL_ShowMessageBox(&box, &answer)) return false;
+    if (answer == 2) AllowRelease(sha);
+    return answer >= 1;
 }
 
 // 1 found, 0 none there, -1 the player turned down another release
@@ -254,6 +315,7 @@ int Search(GameFiles& game) {
     GameFiles other;
     std::unique_ptr<kernel::Disc> other_disc;
     fs::path other_name;
+    std::string other_sha;
     auto consider = [&](const fs::path& assets, const fs::path& name, std::vector<uint8_t> xbe,
                         std::unique_ptr<kernel::Disc> disc) {
         std::string sha = Sha1(xbe);
@@ -273,6 +335,7 @@ int Search(GameFiles& game) {
             other = {assets, std::move(xbe)};
             other_disc = std::move(disc);
             other_name = name;
+            other_sha = sha;
         }
         return false;
     };
@@ -306,7 +369,7 @@ int Search(GameFiles& game) {
     }
 
     if (other_name.empty()) return 0;
-    if (!AskOtherRelease(other_name)) return -1;
+    if (!AskOtherRelease(other_name, other_sha)) return -1;
     game = std::move(other);
     kernel::MountDisc(std::move(other_disc));
     return 1;

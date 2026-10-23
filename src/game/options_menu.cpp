@@ -1,5 +1,5 @@
 // Recomp settings in the game's own options menus: a button a page (GRAPHICS, TOUCH CONTROLS, GENERAL, MOUSE AND
-// KEYBOARD, CHEATS) under the stock ones loads the page again with the F10 panel's rows in their place. A row is four
+// KEYBOARD; the cheats are the panel's alone) under the stock ones loads the page again with the F10 panel's rows in their place. A row is four
 // copies of a stock button clip, its name, its value and an arrow each side of the value; the name's copy stands in
 // for the script's button object, so the cursor works, and a tap on an arrow steps the value as the dpad does. Up and
 // down move the focus here, over the groups' headings, and arrows over and under the rows show more are hidden. The
@@ -38,10 +38,11 @@ using flash::Text;
 
 namespace {
 
-constexpr uint32_t kHashTable = 0x2AC908;
-// as menu.cpp's pages
-const char* const kCaptions[] = {"GRAPHICS", "TOUCH CONTROLS", "GENERAL", "MOUSE AND KEYBOARD", "CHEATS"};
-constexpr int kEntries = int(std::size(kCaptions));
+// as menu.cpp's pages, but for the cheats: those are in the panel the touch controls' gear button opens. The
+// credits are a page with no button here, the title menu's CREDITS opens it
+const char* const kCaptions[] = {"GRAPHICS", "TOUCH CONTROLS", "GENERAL", "MOUSE AND KEYBOARD", "CHEATS", "CREDITS"};
+constexpr int kEntries = 4;
+constexpr int kCreditsMode = 6;
 constexpr int kSlots = 8;
 constexpr int kDepth = 100;
 constexpr int kEscape = 0x1B;
@@ -142,6 +143,7 @@ struct Page {
     float right_x[kSlots] = {};      // the right arrow's place, past its row's value
     uint32_t more[2] = {};           // the scroll arrows, up and down
     size_t slots = 0;
+    size_t made = 0;  // the row clips made: a page the PAGE row turns to shows at most these, the rest blank
     size_t top = 0;
     std::vector<const Row*> rows;  // null restores the defaults
     int capture = 0;  // a key binding: 1 the keys come up, 2 the next key binds or Escape leaves, 3 they come up again
@@ -149,17 +151,16 @@ struct Page {
     bool extra = false;  // the sticks' rows under the page's own buttons
     Bar bar{};           // the page's own bar, read once it rests, where the host has none
     bool bar_seen = false;
+    std::string back;  // the credits: the title menu that opened them, their back
 };
 Page g_page;     // game thread
 int g_next = 0;  // the mode of the page being loaded
 int g_last = 0;  // the mode before it, whose button takes the focus back
+// the title menu whose CREDITS was chosen, until the options page it goes to takes it; empty for none. Taken once,
+// as the page is built: left set, the next OPTIONS would open the credits too
+std::string g_credits_back;
 
-// the id of a string by its name
-uint32_t Hash(const char* text) {
-    uint32_t h = ~0u;
-    for (; *text; text++) h = uint32_t(int32_t(h) >> 8) ^ R32(kHashTable + ((h ^ uint8_t(*text)) & 0xFF) * 4);
-    return h;
-}
+uint32_t Hash(const char* text) { return flash::StringId(text); }
 
 // that field shows field n from now on
 bool Show(X86Context& ctx, int n, uint32_t clip, const char* shows = nullptr, const char* text = nullptr) {
@@ -271,7 +272,7 @@ void Fill(Page& p) {
     const Row* list = p.extra ? app::rows::Controller(&count) : app::rows::Page(p.mode - 1, &count);
     for (size_t i = 0; i < count; i++) p.rows.push_back(&list[i]);
     if (!p.extra && app::rows::Restorable(p.mode - 1)) p.rows.push_back(nullptr);
-    p.slots = std::min(p.slots, p.rows.size());
+    p.slots = std::min(p.made ? p.made : p.slots, p.rows.size());
     p.top = 0;
 }
 
@@ -291,6 +292,7 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
     p.lead = Member(ctx, holder, std::strrchr(h.button, '.') + 1);
     if (!nothing || !flash::IsClip(p.lead)) return false;
     p.slots = kSlots;
+    p.made = 0;
     Fill(p);
     for (size_t i = 0; i < p.slots; i++) {
         char name[16];
@@ -319,6 +321,7 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
         G<float>(p.more[side] + flash::kClipScaleX) = h.scale * kMoreScale;
         G<float>(p.more[side] + flash::kClipScaleY) = h.scale * kMoreScale;
     }
+    p.made = p.slots;
     p.first = p.name[0];
     Follow(p);
     CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
@@ -330,9 +333,10 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
     for (const char* stock : h.stock)
         if (stock) Hide(Member(ctx, holder, stock));
     Show(ctx, kTitle, holder, "$FE_OPTIONS");
-    // back is the options page, not its own back
+    // back is the options page, not its own back; the credits go back to the title menu
     Set(ctx, menu, "mfuncFunctionBack", 0);
-    Set(ctx, menu, "mstrPageBack", String(ctx, h.page));
+    bool credits = p.mode == kCreditsMode && !p.back.empty();
+    Set(ctx, menu, "mstrPageBack", String(ctx, credits ? p.back.c_str() : h.page));
     Focus(ctx, p.name[std::min(FirstRow(p), p.slots - 1)]);
     return true;
 }
@@ -349,6 +353,7 @@ bool Extras(X86Context& ctx, uint32_t root, uint32_t holder) {
     if (!top || !above || !nothing || !flash::IsClip(p.lead)) return false;
     p.extra = true;
     p.slots = kSlots;
+    p.made = 0;
     Fill(p);
     for (size_t i = 0; i < p.slots; i++) {
         char name[16];
@@ -365,6 +370,7 @@ bool Extras(X86Context& ctx, uint32_t root, uint32_t holder) {
         for (int side = 0; side < 2; side++)
             if (!Show(ctx, (side ? kRight : kLeft) + int(i), p.arrow[side][i], nullptr, " ")) return false;
     }
+    p.made = p.slots;
     p.first = p.name[0];
     Follow(p);
     CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
@@ -511,6 +517,8 @@ const Host* FindHost(const char* name) {
 // the page's clips made again: the stock buttons and ours, or the rows of the mode asked for
 void Build(X86Context& ctx, const Host& host, uint32_t root, uint32_t holder, uint32_t menu) {
     Page& p = g_page;
+    // the credits made again stay the credits
+    std::string back = p.mode == kCreditsMode ? p.back : std::string();
     p = {};
     for (Field& f : g_fields) f.data = 0;
     p.host = &host;
@@ -523,10 +531,12 @@ void Build(X86Context& ctx, const Host& host, uint32_t root, uint32_t holder, ui
     }
     p.mode = g_next;
     g_next = 0;
+    p.back = g_credits_back.empty() ? back : std::exchange(g_credits_back, {});
+    if (!p.back.empty() && !p.mode) p.mode = kCreditsMode;
     p.failed = !(p.mode ? Rows(ctx, root, holder, menu) : Entries(ctx, root, holder));
     const char* shown = p.mode ? kCaptions[p.mode - 1] : "buttons";
     LOGI("options menu: %s, %s%s", host.page, shown, p.failed ? ", failed" : "");
-    if (!p.failed && !p.mode && g_last) Focus(ctx, p.entry[std::min(g_last, host.entries) - 1]);
+    if (!p.failed && !p.mode && g_last && g_last <= host.entries) Focus(ctx, p.entry[std::min(g_last, host.entries) - 1]);
     g_last = p.mode;
 }
 
@@ -639,6 +649,9 @@ void UpdateTexts(X86Context& ctx, Page& p) {
         float scale = h.scale * G<float>(from + flash::kClipScaleX);
         p.right_x[i] = h.value_x + kArrowSpace + (kTextLeft + Measure(font, value) * kTextHeight) * scale + kArrowGap;
     }
+    // a shorter page than the one the clips were made for: the rest show nothing, not the last page's rows
+    for (size_t i = p.slots; i < p.made; i++)
+        for (int field : {kName, kValue, kLeft, kRight}) Write(g_fields[field + i], " ");
     Write(g_fields[kScroll], p.top > 0 ? kMore[0] : " ");
     Write(g_fields[kScroll + 1], p.top + p.slots < p.rows.size() ? kMore[1] : " ");
 }
@@ -709,6 +722,9 @@ void OptionsMenu(X86Context& ctx, uint8_t*) {
 }
 
 namespace game {
+
+// exit_menu.cpp: the options page the title menu's CREDITS goes to loads as the credits, back to that title menu
+void OpenCredits(const char* title_page) { g_credits_back = title_page; }
 
 // mouse.cpp: a key binding takes the next click
 bool OptionsCapturing() { return g_page.capture != 0; }

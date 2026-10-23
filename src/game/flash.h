@@ -147,6 +147,14 @@ inline uint32_t KeptName(const char* text) {
 
 inline uint32_t Text(const char* text) { return KeptName(text) + 12; }
 
+// the id of a string by its name, as the game hashes "$NAME" without the $
+inline uint32_t StringId(const char* text) {
+    constexpr uint32_t kHashTable = 0x2AC908;
+    uint32_t h = ~0u;
+    for (; *text; text++) h = uint32_t(int32_t(h) >> 8) ^ kernel::R32(kHashTable + ((h ^ uint8_t(*text)) & 0xFF) * 4);
+    return h;
+}
+
 inline uint32_t String(X86Context& ctx, const char* text) { return kernel::CallGuest(ctx, kNewString, {Text(text)}); }
 
 inline bool Set(X86Context& ctx, uint32_t object, const char* name, uint32_t value) {

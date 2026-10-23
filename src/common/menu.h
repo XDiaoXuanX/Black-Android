@@ -22,7 +22,8 @@ struct Row {
     int id;  // a bind row's input action
     const char* label;
 };
-// 0 graphics, 1 touch controls, 2 general, 3 mouse and keyboard, 4 cheats
+// 0 graphics, 1 touch controls, 2 general, 3 mouse and keyboard, 4 cheats (the panel's alone, not in the game's options),
+// 5 credits (the title menu's CREDITS)
 const Row* Page(int page, size_t* count);
 // the sticks' rows, on the game's control setup page; the panel shows them on its touch controls page
 const Row* Controller(size_t* count);
