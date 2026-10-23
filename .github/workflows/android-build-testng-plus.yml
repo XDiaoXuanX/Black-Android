@@ -3,6 +3,8 @@ name: Black Android CI (Plus )
 
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
     
 
 permissions:
