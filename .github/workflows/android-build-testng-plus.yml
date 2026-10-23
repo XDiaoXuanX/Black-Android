@@ -1,11 +1,9 @@
 
-name: Android CI
+name: Black Android CI (Plus )
 
 on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+  workflow_dispatch:
+    
 
 permissions:
   contents: read
