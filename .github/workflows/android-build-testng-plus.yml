@@ -4,11 +4,13 @@ name: Black Android CI (Plus )
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    branches: ["testing-dev"]
+  pull_request:
+    branches: ["testing-dev"]
     
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
