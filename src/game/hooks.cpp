@@ -20,6 +20,10 @@ namespace d3d {
 void ViewScale(float xy);
 }
 
+namespace game {
+void EspCamera();  // esp.cpp
+}
+
 namespace {
 
 constexpr uint32_t kDevice = SYM(D3D_Device);
@@ -203,6 +207,7 @@ void FieldOfView(X86Context& ctx, uint8_t*) {
 // The list of the first person models, gun, arms and muzzle mesh: drawn at the viewmodel setting
 X86_EXTERN_FUNC(__imp__sub_00176F60);
 X86_FUNC(sub_00176F60) {
+    if (ctx.esi == R32(kDisplay) + kDisplayDrawLists + kAlphaDrawList * kDrawListSize) game::EspCamera();
     bool gun = g_gun != 1 && ctx.esi == R32(kDisplay) + kDisplayDrawLists + kGunDrawList * kDrawListSize;
     if (gun) d3d::ViewScale(g_gun);
     __imp__sub_00176F60(ctx, base);

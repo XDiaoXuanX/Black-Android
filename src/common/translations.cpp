@@ -104,6 +104,8 @@ constexpr Entry kEntries[] = {
     {"NO RECOIL", {u"Sans recul", u"Kein Rückstoß", u"Nessun rinculo", u"Sin retroceso", u"Tanpa recoil"}},
     {"GOD MODE", {u"Invincibilité", u"Unverwundbarkeit", u"Invincibilità", u"Invencibilidad", u"Mode dewa"}},
     {"ONE-HIT KILL", {u"Mort en un coup", u"Ein-Treffer-Kill", u"Uccisione con un colpo", u"Muerte de un golpe", u"Sekali tembak mati"}},
+    {"ESP LINES", {u"Lignes ESP", u"ESP-Linien", u"Linee ESP", u"Líneas ESP", u"Garis ESP"}},
+    {"AIMBOT", {u"Visée automatique", u"Zielhilfe", u"Mira automatica", u"Apuntado automático", u"Bidik otomatis"}},
     {"GAME SPEED", {u"Vitesse du jeu", u"Spielgeschwindigkeit", u"Velocità di gioco", u"Velocidad del juego", u"Kecepatan game"}},
     {"UNLOCK ALL MISSIONS", {u"Débloquer toutes les missions", u"Alle Missionen freischalten", u"Sblocca tutte le missioni", u"Desbloquear todas las misiones", u"Buka semua misi"}},
     {"UNLOCK BLACK OPS", {u"Débloquer Black Ops", u"Black Ops freischalten", u"Sblocca Black Ops", u"Desbloquear Black Ops", u"Buka Black Ops"}},

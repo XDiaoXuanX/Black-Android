@@ -23,6 +23,10 @@ using flash::Member;
 using flash::Members;
 using flash::Type;
 
+namespace game {
+void Aimbot(X86Context& ctx);  // esp.cpp
+}
+
 // degrees a count at sensitivity 1
 constexpr float kDegrees = 0.05f;
 
@@ -36,6 +40,7 @@ constexpr uint32_t kControllerAimHeld = 0x104;
 // clamps the pitch and wraps the yaw after this.
 void MouseLook(X86Context& ctx, uint8_t*) {
     game::g_zoom = ctx.xmm[2].f[0];
+    game::Aimbot(ctx);
     float dx;
     float dy;
     if (!input::TakeMouse(dx, dy)) return;

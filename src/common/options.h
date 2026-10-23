@@ -48,6 +48,8 @@ struct Options {
     bool infinite_grenades = false;  // cheat: throwing a grenade keeps the count
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
+    bool esp = false;  // cheat: a line from the bottom of the screen and a box to each living enemy
+    bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();

@@ -239,7 +239,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kHdr };
+             kFog, kAntiAliasing, kHdr, kEsp, kAimbot };
 
 using rows::Kind;
 using rows::Row;
@@ -308,6 +308,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "PLAYER"},
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
+    {Kind::Value, kEsp, "ESP LINES"},
+    {Kind::Value, kAimbot, "AIMBOT"},
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -389,6 +391,8 @@ bool* ToggleFlag(Settings& s, int id) {
         case kInfiniteGrenades: return &o.infinite_grenades;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
+        case kEsp: return &o.esp;
+        case kAimbot: return &o.aimbot;
         default: return nullptr;
     }
 }
@@ -631,6 +635,8 @@ void RestoreDefaults(int page) {
         o.infinite_grenades = none.infinite_grenades;
         o.unlock_levels = none.unlock_levels;
         o.unlock_black_ops = none.unlock_black_ops;
+        o.esp = none.esp;
+        o.aimbot = none.aimbot;
         Changed();
         return;
     }
@@ -660,6 +666,8 @@ void RestoreDefaults(int page) {
     o.infinite_grenades = keep.infinite_grenades;
     o.unlock_levels = keep.unlock_levels;
     o.unlock_black_ops = keep.unlock_black_ops;
+    o.esp = keep.esp;
+    o.aimbot = keep.aimbot;
     Changed();
 }
 
