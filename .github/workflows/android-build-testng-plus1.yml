@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-24.04
     defaults:
       run:
-        working-directory: Black-Android/app
+        working-directory: Black-Android
     steps:
       - uses: actions/checkout@v7
         with:
@@ -116,7 +116,7 @@ jobs:
         id: build
         run: |
           set -e
-          ROOT_DIR="${{ github.workspace }}/Black-Android/app"
+          ROOT_DIR="${{ github.workspace }}/Black-Android"
 
           VN="${{ github.event.inputs.versionName }}"
           VC="${{ github.run_number }}"
