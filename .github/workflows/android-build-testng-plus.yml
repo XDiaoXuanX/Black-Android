@@ -30,23 +30,23 @@ jobs:
         shell: cmd
         run: call "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" --install "platforms;android-34" "ndk;%NDK_VERSION%" "cmake;%CMAKE_VERSION%" >nul
 
-      - name: Decrypt default.xbe
-        if: github.event_name == 'push'
-        shell: bash
-        env:
-          XBE_KEY: ${{ secrets.XBE_KEY }}
-        run: |
-          if [ -z "$XBE_KEY" ]; then
-            echo "::error::The XBE_KEY secret is missing"
-            exit 1
-          fi
-          mkdir -p assets
-          key="$RUNNER_TEMP/xbe.key"
-          printf '%s' "$XBE_KEY" > "$key"
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-            -in ci/default.xbe.enc -out assets/default.xbe \
-            -pass "file:$key"
-          rm -f "$key"
+     # - name: Decrypt default.xbe
+     #   if: github.event_name == 'push'
+     #   shell: bash
+     #   env:
+     #     XBE_KEY: ${{ secrets.XBE_KEY }}
+     #   run: |
+     #     if [ -z "$XBE_KEY" ]; then
+     #       echo "::error::The XBE_KEY secret is missing"
+     #       exit 1
+     #     fi
+     #     mkdir -p assets
+     #     key="$RUNNER_TEMP/xbe.key"
+     #     printf '%s' "$XBE_KEY" > "$key"
+     #     openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+     #       -in ci/default.xbe.enc -out assets/default.xbe \
+     #       -pass "file:$key"
+     #     rm -f "$key"
 
       - name: Build APK
         if: github.event_name == 'push'
