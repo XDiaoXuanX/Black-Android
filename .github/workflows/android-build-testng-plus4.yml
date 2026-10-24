@@ -186,7 +186,7 @@ jobs:
           # pass the override to Gradle only when it differs from the default
           if [ "$app_id" != "com.racas.black" ]; then
             echo "Custom applicationId: $app_id"
-            extra=" -PcustomApplicationId=$app_id -I ci/init-custom-package.gradle"
+            extra=" -PcustomApplicationId=$app_id -I ci/build.gradle"
           else
             extra=""
           fi
