@@ -10,8 +10,12 @@
 # - pull request: not run here. It needs a 10-90 minute Windows job and the game
 #   key; use the UI Preview workflow to test the interface without it.
 #
-# Secrets: XBE_KEY (passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (release
-# .jks in base64), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
+# Secrets:
+# - Required: XBE_KEY (passphrase of ci/default.xbe.enc).
+# - Optional release signing: KEYSTORE_BASE64 (release .jks in base64),
+#   KEYSTORE_PASSWORD, KEY_ALIAS (default armsx2-ci), KEY_PASSWORD.
+#   If KEYSTORE_BASE64 is missing, a CI keystore is generated automatically
+#   with a temporary password so the workflow can still produce a signed APK.
 
 name: Build Android CI ( Plus+ )
 
@@ -106,7 +110,7 @@ jobs:
           XBE_KEY: ${{ secrets.XBE_KEY }}
         run: |
           if [ -z "$XBE_KEY" ]; then
-            echo "::error::The XBE_KEY secret is missing. The full build needs XBE_KEY and the four KEYSTORE_* secrets; add them in Settings -> Secrets and variables -> Actions. The UI Preview workflow needs no game key."
+            echo "::error::The XBE_KEY secret is missing. The full build needs XBE_KEY; add it in Settings -> Secrets and variables -> Actions. The UI Preview workflow needs no game key."
             exit 1
           fi
           mkdir -p assets
@@ -119,6 +123,8 @@ jobs:
           sha1sum assets/default.xbe
 
       # No longer gated on tag pushes: manual builds also publish releases now.
+      # Signing is optional - falls back to an auto-generated CI keystore when
+      # KEYSTORE_BASE64 / KEYSTORE_PASSWORD secrets are not provided.
       - name: Release key
         shell: bash
         env:
@@ -127,16 +133,49 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Missing release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or the APK gets a debug signature."
-            exit 1
+          set -e
+          KEYSTORE_PATH="${HOME}/.android/release.keystore"
+          KEY_ALIAS_VAL="${KEY_ALIAS:-black-android-ci}"
+          KS_PASSWORD="${KEYSTORE_PASSWORD:-}"
+          KEY_PASSWORD_VAL="${KEY_PASSWORD:-}"
+
+          mkdir -p "${HOME}/.android"
+
+          if [ -z "$KS_PASSWORD" ]; then
+            echo "WARNING: No keystore password secret set - using temporary insecure password." >&2
+            KS_PASSWORD="black-android-ci-temp"
+            KEY_PASSWORD_VAL="black-android-ci-temp"
+          elif [ -z "$KEY_PASSWORD_VAL" ]; then
+            # PKCS12 usually shares storepass/keypass, but be explicit.
+            KEY_PASSWORD_VAL="$KS_PASSWORD"
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding release keystore from KEYSTORE_BASE64..."
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+            if [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+              echo "WARNING: KEYSTORE_BASE64 is set but KEYSTORE_PASSWORD is not - signing will likely fail." >&2
+            fi
+          elif [ ! -f "$KEYSTORE_PATH" ]; then
+            echo "No KEYSTORE_BASE64 secret - generating CI keystore for signing..."
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype PKCS12 \
+              -alias "$KEY_ALIAS_VAL" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KS_PASSWORD" \
+              -keypass "$KEY_PASSWORD_VAL" \
+              -dname "CN=Black Android CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              2>/dev/null
+          fi
+
           {
-            echo "BLACK_KEYSTORE=$RUNNER_TEMP/release.jks"
-            echo "BLACK_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-            echo "BLACK_KEY_ALIAS=$KEY_ALIAS"
-            echo "BLACK_KEY_PASSWORD=$KEY_PASSWORD"
+            echo "BLACK_KEYSTORE=$KEYSTORE_PATH"
+            echo "BLACK_KEYSTORE_PASSWORD=$KS_PASSWORD"
+            echo "BLACK_KEY_ALIAS=$KEY_ALIAS_VAL"
+            echo "BLACK_KEY_PASSWORD=$KEY_PASSWORD_VAL"
           } >> "$GITHUB_ENV"
 
       - name: Version
