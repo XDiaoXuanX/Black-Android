@@ -1,17 +1,19 @@
 # Builds the full APK with the native renderer and the recompiled game.
 #
 # Runs:
-#  - v* tag: builds and publishes a release, as before.
-#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input;
-#    the APK is attached to the run as an artifact and nothing is published. This is the
-#    "preview build from a branch" path for the real app. It still needs the secrets below:
-#    the recompiler cannot run without the decrypted default.xbe. `applicationId` is passed down
-#    to build.bat, which patches app/build.gradle(.kts) before Gradle runs.
-#  - pull request: not run here. It needs a 10-90 minute Windows job and the game key; use the
-#    UI Preview workflow to test the interface from a branch without it.
+#  - v* tag: builds and publishes a release (tag already exists).
+#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input.
+#    A tag `v<version>` is created at the built commit and a GitHub Release is published with the APK.
+#    Still needs the secrets below: the recompiler cannot run without the decrypted default.xbe,
+#    and the release APK is signed with the keystore.
+#  - pull request: not run here. Use the UI Preview workflow to test the interface from a branch.
+#
+# Optional manual-only input `application_id` overrides the APK package id (e.g. com.example.game) WITHOUT
+# touching app/build.gradle. It is applied by ci/init-custom-package.gradle and is ignored on v* tag builds
+# so that tagged releases always stay canonical (com.racas.black).
 #
 # Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (the release .jks in base64),
-# KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without the keystore the APK has a debug signature.
+# KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
 name: Build Android CI ( Plus+ )
 
 on:
@@ -22,19 +24,13 @@ on:
         type: string
         default: ""
       version:
-        description: "Version name (empty: the v* tag, or preview-<run> for a manual build)"
+        description: "Version name (empty: preview-<run>)"
         type: string
         default: ""
-      applicationId:
-        description: "Custom applicationId, e.g. com.racas.black (empty: keep the one in build.gradle)"
-        required: false
-        default: "com.racas.black"
-        type: choice
-        options:
-          - com.racas.black
-          - com.racas.black.custom
-          - com.racas.black.turnip
-          - com.antutu.ABenchMark
+      application_id:
+        description: "Custom applicationId (Java package, e.g. com.example.game). Empty: com.racas.black. Ignored on v* tag builds."
+        type: string
+        default: ""
   push:
     tags: ["v*"]
 
@@ -90,7 +86,6 @@ jobs:
           sha1sum assets/default.xbe
 
       - name: Release key
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -99,7 +94,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Tagged releases require the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
+            echo "::error::Publishing requires the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
             exit 1
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
@@ -116,61 +111,112 @@ jobs:
         env:
           INPUT_REF: ${{ github.event.inputs.ref }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
-          INPUT_APP_ID: ${{ github.event.inputs.applicationId }}
+          INPUT_APP_ID: ${{ github.event.inputs.application_id }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
             name="${GITHUB_REF_NAME#v}"
             source="tag $GITHUB_REF_NAME"
-            do_release=true
+            # Tag releases stay canonical: ignore any custom id even if somebody set the input.
+            app_id="com.racas.black"
+            is_tag="true"
+            tag_name="$GITHUB_REF_NAME"
           else
             name="${INPUT_VERSION:-preview-${GITHUB_RUN_NUMBER}}"
             source="${INPUT_REF:-$GITHUB_REF_NAME}"
-            do_release=false
+            app_id="${INPUT_APP_ID:-com.racas.black}"
+            is_tag="false"
+            tag_name=""
           fi
+
           # the version goes into the APK and artifact names: keep it to characters those accept
           name=$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
           [ -z "$name" ] && name="preview-${GITHUB_RUN_NUMBER}"
 
-          # Only preview builds with a custom applicationId get a suffix
-          artifact="$name"
-          if [ "$do_release" != "true" ] && [ -n "$INPUT_APP_ID" ]; then
-            suffix=$(printf '%s' "$INPUT_APP_ID" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
-            [ -n "$suffix" ] && artifact="${name}-${suffix}"
+          if [ "$is_tag" = "false" ]; then
+            tag_name="v$name"
           fi
 
-          echo "name=$name"             >> "$GITHUB_OUTPUT"
-          echo "artifact=$artifact"     >> "$GITHUB_OUTPUT"
-          echo "source=$source"         >> "$GITHUB_OUTPUT"
-          echo "do_release=$do_release" >> "$GITHUB_OUTPUT"
-          echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name" >> "$GITHUB_ENV"
+          # validate applicationId: must be a Java package with at least two segments
+          if ! [[ "$app_id" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]]; then
+            echo "::error::Invalid application_id '$app_id'. Use a Java package like com.example.game"
+            exit 1
+          fi
+
+          echo "name=$name"         >> "$GITHUB_OUTPUT"
+          echo "source=$source"     >> "$GITHUB_OUTPUT"
+          echo "app_id=$app_id"     >> "$GITHUB_OUTPUT"
+          echo "is_tag=$is_tag"     >> "$GITHUB_OUTPUT"
+          echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
+
+          # pass the override to Gradle only when it differs from the default
+          if [ "$app_id" != "com.racas.black" ]; then
+            echo "Custom applicationId: $app_id"
+            extra=" -PcustomApplicationId=$app_id -I ci/init-custom-package.gradle"
+          else
+            extra=""
+          fi
+
+          echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name$extra" >> "$GITHUB_ENV"
 
       - name: Build
         shell: cmd
-        env:
-          APP_ID: ${{ github.event.inputs.applicationId }}
         run: call build.bat
 
       - name: Name the APK
         shell: bash
-        run: mv app/build/outputs/apk/release/app-release.apk "Black-${{ steps.version.outputs.artifact }}.apk"
+        env:
+          APP_ID: ${{ steps.version.outputs.app_id }}
+        run: |
+          # suffix the filename when a custom applicationId was used, so two builds of the same version
+          # can't collide in the release page
+          suffix=""
+          if [ "$APP_ID" != "com.racas.black" ]; then
+            suffix="-$APP_ID"
+          fi
+          mv app/build/outputs/apk/release/app-release.apk "Black-${{ steps.version.outputs.name }}${suffix}.apk"
 
-      - uses: actions/upload-artifact@v5
-        with:
-          name: Black-${{ steps.version.outputs.artifact }}
-          path: Black-${{ steps.version.outputs.artifact }}.apk
-          if-no-files-found: error
-          retention-days: 30
+      - name: Locate the APK
+        id: apk
+        shell: bash
+        env:
+          APP_ID: ${{ steps.version.outputs.app_id }}
+        run: |
+          suffix=""
+          if [ "$APP_ID" != "com.racas.black" ]; then
+            suffix="-$APP_ID"
+          fi
+          echo "file=Black-${{ steps.version.outputs.name }}${suffix}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Create git tag (manual builds)
+        if: steps.version.outputs.is_tag == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag_name }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          existing=$(gh api "repos/${{ github.repository }}/git/refs/tags/$TAG" --jq .object.sha 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            if [ "$existing" != "$sha" ]; then
+              echo "::error::Tag $TAG already exists at $existing, not at the commit being built ($sha). Pick a different version."
+              exit 1
+            fi
+            echo "Tag $TAG already exists at $sha"
+          else
+            gh api "repos/${{ github.repository }}/git/refs" -f ref="refs/tags/$TAG" -f sha="$sha" >/dev/null
+            echo "Created tag $TAG at $sha"
+          fi
 
       - name: Run summary
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.name }}
-          ARTIFACT: ${{ steps.version.outputs.artifact }}
           SOURCE: ${{ steps.version.outputs.source }}
-          DO_RELEASE: ${{ steps.version.outputs.do_release }}
+          APP_ID: ${{ steps.version.outputs.app_id }}
+          TAG: ${{ steps.version.outputs.tag_name }}
+          APK: ${{ steps.apk.outputs.file }}
         run: |
-          APK="Black-$ARTIFACT.apk"
           sha=$(sha256sum "$APK" | cut -d' ' -f1)
           size=$(stat -c %s "$APK")
           commit=$(git rev-parse --short=7 HEAD)
@@ -178,44 +224,50 @@ jobs:
             echo "## Black for Android \`$VERSION\`"
             echo
             echo "- Source: $SOURCE at \`$commit\`"
+            echo "- applicationId: \`$APP_ID\`"
+            echo "- Tag: \`$TAG\`"
             echo "- APK: \`$APK\` ($size bytes)"
             echo "- SHA-256: \`$sha\`"
             echo
-            echo "**Download:** open the **Artifacts** section at the bottom of this run page."
+            echo "**Download:** from the [Releases page](../../releases/tag/$TAG)."
             echo
             echo '```'
             echo "adb install -r $APK"
             echo '```'
-            if [ "$DO_RELEASE" != "true" ]; then
-              echo
-              echo "Manual build: nothing was published. Merge the branch and push a \`v*\` tag to make a release."
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release notes
-        if: steps.version.outputs.do_release == 'true'
         shell: bash
+        env:
+          APK: ${{ steps.apk.outputs.file }}
+          IS_TAG: ${{ steps.version.outputs.is_tag }}
+          TAG: ${{ steps.version.outputs.tag_name }}
         run: |
-          apk="Black-${{ steps.version.outputs.artifact }}.apk"
+          apk="$APK"
           size=$(awk -v b="$(stat -c %s "$apk")" 'BEGIN { printf "%.1f MB", b / 1048576 }')
           sha=$(sha256sum "$apk" | cut -d' ' -f1)
-          sed -e "s|{{VERSION}}|$GITHUB_REF_NAME|g" -e "s|{{TAG}}|$GITHUB_REF_NAME|g" -e "s|{{APK}}|$apk|g" \
+          sed -e "s|{{VERSION}}|$TAG|g" -e "s|{{TAG}}|$TAG|g" -e "s|{{APK}}|$apk|g" \
               -e "s|{{SIZE}}|$size|g" -e "s|{{SHA256}}|$sha|g" ci/release-notes.md > "$RUNNER_TEMP/release-notes.md"
           # the commits since the previous tag, which the app's update dialog shows too
-          prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          if [ "$IS_TAG" = "true" ]; then
+            end_ref="$GITHUB_REF_NAME"
+          else
+            end_ref="HEAD"
+          fi
+          prev=$(git describe --tags --abbrev=0 --match 'v*' "${end_ref}^" 2>/dev/null || true)
           {
             echo
             echo "## What's Changed"
             echo
-            git log --no-merges --pretty='* %s' ${prev:+"$prev.."}"$GITHUB_REF_NAME"
+            git log --no-merges --pretty='* %s' ${prev:+"$prev.."}"$end_ref"
           } >> "$RUNNER_TEMP/release-notes.md"
 
       - name: Release
-        if: steps.version.outputs.do_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: Black for Android ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: Black for Android ${{ steps.version.outputs.tag_name }}
           body_path: ${{ runner.temp }}/release-notes.md
-          files: Black-${{ steps.version.outputs.artifact }}.apk
+          files: ${{ steps.apk.outputs.file }}
           generate_release_notes: true
-          make_latest: true
+          make_latest: ${{ steps.version.outputs.is_tag == 'true' }}
