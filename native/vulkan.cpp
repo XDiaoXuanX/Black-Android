@@ -3393,6 +3393,7 @@ void VulkanBackend::Present(const Surface& front) {
         fps_t_ = now;
     }
     if (presents_ % 600 == 0) SavePipelineCache();
+    dynres::Frame();
     ApplySettings();
 }
 

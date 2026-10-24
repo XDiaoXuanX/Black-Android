@@ -24,6 +24,12 @@ void WindowPixels(int& w, int& h);
 
 }  // namespace host
 
+// the render resolution following the frame rate (dynamic_resolution.cpp)
+namespace dynres {
+uint32_t Percent();  // the render resolution in use, percent of the screen's: RENDER RESOLUTION's while it is off
+void Frame();        // vulkan thread, each present
+}  // namespace dynres
+
 // controllers through SDL (input.cpp): the main thread hands over their plug events
 namespace input {
 void OnPadEvent(const SDL_Event& e);
@@ -57,6 +63,8 @@ void StepSize(int step);
 void EditLayout();  // the controls over the screen to drag where they go
 const char* SkinName();  // the buttons' look: CLASSIC (drawn), XBOX or CLEAN (the skin's images)
 void StepSkin(int step);
+const char* StickModeName();  // FLOATING (under the thumb) or FIXED (in its place)
+void StepStickMode(int step);
 // render thread, once: the skins' atlas as RGBA from the APK's assets, then its ImGui texture
 bool LoadSkin(std::vector<uint8_t>& rgba, uint32_t& w, uint32_t& h);
 void SetSkinTexture(uint64_t texture);

@@ -24,6 +24,13 @@ struct Options {
     uint32_t anti_aliasing = 0;  // 0 off, 1 FXAA as the frame goes onto the screen, 2 SSAA: twice the resolution
     bool hdr = false;  // a tone map that brings back the colours the console's overbright look burns out
     uint32_t draw_distance = 1;  // times the game's LOD and draw distances
+    // the render resolution follows the frame rate (native/dynamic_resolution.cpp): down when it falls under the
+    // target, up again once it holds the target this many seconds; within min and max, percent of the screen's
+    bool dynamic_resolution = false;
+    uint32_t dynamic_target_fps = 60;
+    uint32_t dynamic_min_percent = 40;
+    uint32_t dynamic_max_percent = 100;
+    uint32_t dynamic_hold = 5;
     float mouse_sensitivity = 1.0f;
     float touch_sensitivity = 1.0f;  // the touch screen's look, apart from the mouse's
     bool invert_mouse = false;
@@ -48,6 +55,8 @@ struct Options {
     bool infinite_grenades = false;  // cheat: throwing a grenade keeps the count
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
+    bool esp = false;  // cheat: a line from the bottom of the screen and a box to each living enemy
+    bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
