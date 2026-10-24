@@ -29,8 +29,13 @@ on:
         default: ""
       application_id:
         description: "Custom applicationId (Java package, e.g. com.example.game). Empty: com.racas.black. Ignored on v* tag builds."
-        type: string
-        default: ""
+        required: false
+        default: "com.racas.black"
+        type: choice
+        options:
+          - com.racas.black
+          - com.racas.black.custom
+          - com.antutu.ABenchMark
   push:
     tags: ["v*"]
 
