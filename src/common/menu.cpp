@@ -14,6 +14,7 @@
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "app/app.h"
 #include "audio/output.h"
@@ -47,7 +48,14 @@ void StepSize(int step);
 void EditLayout();
 const char* SkinName();
 void StepSkin(int step);
+const char* StickModeName();
+void StepStickMode(int step);
 }  // namespace touch
+
+// native/dynamic_resolution.cpp: the render resolution in use, percent of the screen's
+namespace dynres {
+uint32_t Percent();
+}  // namespace dynres
 
 // native/update.cpp: the activity asks GitHub for a newer release and says what it found
 namespace host {
@@ -239,7 +247,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kHdr, kEsp, kAimbot };
+             kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
+             kDynamicMax, kDynamicHold };
 
 using rows::Kind;
 using rows::Row;
@@ -256,6 +265,11 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
+    {Kind::Value, kDynamicRes, "DYNAMIC RESOLUTION"},
+    {Kind::Value, kDynamicTarget, "TARGET FRAME RATE"},
+    {Kind::Value, kDynamicMin, "MIN RESOLUTION"},
+    {Kind::Value, kDynamicMax, "MAX RESOLUTION"},
+    {Kind::Value, kDynamicHold, "HOLD BEFORE RAISING"},
     {Kind::Heading, -1, "QUALITY"},
     {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
     {Kind::Value, kDrawDistance, "DRAW DISTANCE"},
@@ -273,6 +287,7 @@ constexpr Row kTouchRows[] = {
     {Kind::Value, kTouchOpacity, "CONTROLS OPACITY"},
     {Kind::Value, kTouchSize, "CONTROLS SIZE"},
     {Kind::Value, kTouchSkin, "BUTTON STYLE"},
+    {Kind::Value, kTouchStick, "ANALOG STICK"},
     {Kind::Value, kTouchEdit, "EDIT CONTROLS POSITION"},
     {Kind::Heading, -1, "MOTION CONTROLS"},
     {Kind::Value, kGyro, "GYROSCOPE"},
@@ -309,7 +324,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
-    {Kind::Value, kAimbot, "AIMBOT"},
+    {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},  // esp.cpp turns the view only at a zoom above 1
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -325,10 +340,10 @@ struct Credit {
 };
 constexpr Credit kCredits[] = {
     {"CONTRIBUTORS", nullptr, nullptr},
-    {"RANGGACASPER", "ANDROID PORT", nullptr},
-    {"DATFOOLDIVE", "ANY WEAPON IN ANY LEVEL", nullptr},
-    {"BAGASROMADON", "BUTTON SKIN", nullptr},
-    {"ZAKIRU", "HDR SHADER", nullptr},
+    {"Rangga Casper", "ANDROID PORT", "https://github.com/RanggaCasper"},
+    {"DATFOOLDIVE", "ANY WEAPON IN ANY LEVEL", "https://github.com/datfooldive"},
+    {"BAGASROMADON", "BUTTON SKIN", "https://github.com/bagasromadon"},
+    {"Zukiru", "HDR SHADER", nullptr},
     {"BUILT WITH", nullptr, nullptr},
     {"XBOXXBE-RECOMP", "TGP482", nullptr},
     {"SDL3, GLSLANG, TOML++", "LIBRARIES", nullptr},
@@ -393,6 +408,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kEsp: return &o.esp;
         case kAimbot: return &o.aimbot;
+        case kDynamicRes: return &o.dynamic_resolution;
         default: return nullptr;
     }
 }
@@ -406,18 +422,42 @@ void FovText(uint32_t fov, char (&text)[64]) {
     std::snprintf(text, sizeof(text), fov == kGameFov ? "%u (DEFAULT)" : "%u", fov);
 }
 
+// the dynamic resolution's frame rates to hold
+constexpr uint32_t kDynamicTargets[] = {30, 45, 60, 90, 120};
+
+// a resolution as percent of the screen's and its pixels
+void PercentText(uint32_t percent, char (&text)[64]) {
+    Mode out = Output();
+    std::snprintf(text, sizeof(text), "%u%% (%ux%u)", percent, out.width * percent / 100, out.height * percent / 100);
+}
+
 // the display rows that are no ON / OFF, stepped first; false for another row
 bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
         case kRenderResolution: {
-            // 20% to 200% in steps of 5
+            // 20% to 200% in steps of 5; greyed while the dynamic resolution has it, which it shows as it is now
             if (step) s.render_percent = uint32_t(StepRange(int(s.render_percent), 20, 200, 5, step));
-            Mode out = Output();
-            std::snprintf(text, sizeof(text), "%u%% (%ux%u)", s.render_percent, out.width * s.render_percent / 100,
-                          out.height * s.render_percent / 100);
+            PercentText(o.dynamic_resolution ? dynres::Percent() : s.render_percent, text);
             return true;
         }
+        case kDynamicTarget:
+            std::snprintf(text, sizeof(text), "%u FPS", kDynamicTargets[StepTable(kDynamicTargets, o.dynamic_target_fps, step)]);
+            return true;
+        case kDynamicMin:
+            // 20% up to the max, the max down to the min
+            if (step) o.dynamic_min_percent = uint32_t(StepRange(int(o.dynamic_min_percent), 20, int(o.dynamic_max_percent), 5, step));
+            PercentText(o.dynamic_min_percent, text);
+            return true;
+        case kDynamicMax:
+            if (step) o.dynamic_max_percent = uint32_t(StepRange(int(o.dynamic_max_percent), int(o.dynamic_min_percent), 200, 5, step));
+            PercentText(o.dynamic_max_percent, text);
+            return true;
+        case kDynamicHold:
+            // 1 to 30 seconds
+            if (step) o.dynamic_hold = uint32_t(StepRange(int(o.dynamic_hold), 1, 30, 1, step));
+            std::snprintf(text, sizeof(text), "%u S", o.dynamic_hold);
+            return true;
         case kFmvScale:
             std::snprintf(text, sizeof(text), "%s", kFmvScaleNames[StepTable(kFmvScales, o.fmv_scale, step)]);
             return true;
@@ -535,6 +575,11 @@ void StepInputRow(int id, int step, char (&text)[64]) {
         case kTouchSkin:
             if (step) touch::StepSkin(step);
             std::snprintf(text, sizeof(text), "%s", touch::SkinName());
+            break;
+        case kTouchStick:
+            // under the thumb where it comes down, or fixed in its place
+            if (step) touch::StepStickMode(step);
+            std::snprintf(text, sizeof(text), "%s", touch::StickModeName());
             break;
         case kTouchEdit:
             // any step opens the editor over the screen
@@ -849,6 +894,36 @@ void DrawFooter(float em) {
     if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0))) Defaults();
 }
 
+// in the rows' child: a finger dragged up or down scrolls them as a phone's lists do, then glides a little when it
+// lifts. Past half an em the press is the scroll's, so the row or weapon it came down on is not clicked
+void DragScroll(float em) {
+    constexpr float kFriction = 6.0f;  // of the glide's speed lost a second
+    static bool dragging = false;
+    static float glide = 0;  // pixels a second
+    ImGuiIO& io = ImGui::GetIO();
+    // the rows, not the scrollbar beside them: that drags as it always did
+    bool inside = ImGui::GetCurrentWindow()->InnerRect.Contains(io.MouseClickedPos[0]);
+    if (ImGui::IsMouseClicked(0)) {
+        dragging = false;
+        glide = 0;
+    }
+    if (ImGui::IsMouseDown(0) && inside) {
+        if (!dragging && std::fabs(ImGui::GetMouseDragDelta(0).y) > em * 0.5f) dragging = true;
+        if (!dragging) return;
+        ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+        if (io.DeltaTime > 0) glide = (glide - io.MouseDelta.y / io.DeltaTime) * 0.5f;  // smoothed over frames
+        ImGui::ClearActiveID();
+        return;
+    }
+    dragging = false;
+    if (std::fabs(glide) < em) {
+        glide = 0;
+        return;
+    }
+    ImGui::SetScrollY(ImGui::GetScrollY() + glide * io.DeltaTime);
+    glide *= std::max(0.0f, 1.0f - kFriction * io.DeltaTime);
+}
+
 void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
@@ -865,11 +940,17 @@ void DrawPanel() {
         DrawTitle("CHEATS");
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
+        // a scrollbar a thumb can take, not the desktop's thin one
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.4f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.5f);
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
+        DragScroll(em);
         g_hovered_box = -1;
         DrawRows(g_page);
         if (g_page == kCheatsPage) DrawWeapons();
         ImGui::EndChild();
+        ImGui::PopStyleVar(3);
         DrawFooter(em);
     }
     ImGui::End();
@@ -960,7 +1041,19 @@ void rows::Defaults(int page) { RestoreDefaults(page); }
 // the recomp's own pages share one set of defaults, too much to undo from one of them
 bool rows::Restorable(int page) { return page == kKeyboardPage || page == kCheatsPage; }
 
-bool rows::Enabled(const Row&) { return true; }
+// the dynamic resolution's rows while it is on, RENDER RESOLUTION while it is off
+bool rows::Enabled(const Row& row) {
+    if (row.kind != Kind::Value) return true;
+    bool dynamic = game::Opt().dynamic_resolution;
+    switch (row.id) {
+        case kRenderResolution: return !dynamic;
+        case kDynamicTarget:
+        case kDynamicMin:
+        case kDynamicMax:
+        case kDynamicHold: return dynamic;
+        default: return true;
+    }
+}
 
 bool rows::Opens(const Row& row) {
     // the credits' rows have no arrows: the links open, the rest do nothing

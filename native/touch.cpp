@@ -663,6 +663,7 @@ uint32_t g_skin = kXbox;
 size_t g_preset = 0;
 float g_opacity = 0.85f;
 float g_scale = 1.0f;  // every control's size, on top of its own
+bool g_fixed_stick = false;  // the stick stays in its place, else it comes down under the thumb
 bool g_loaded = false;
 // the editor: the layout before it opened (for Cancel), the control picked
 std::atomic<bool> g_editing{false};
@@ -697,6 +698,7 @@ void LoadLayout() {
         std::string skin = t["skin"].value_or(std::string(kSkinIds[g_skin]));
         for (uint32_t i = 0; i < kSkins; i++)
             if (skin == kSkinIds[i]) g_skin = i;
+        g_fixed_stick = t["stick"].value_or(std::string("floating")) == "fixed";
         for (size_t i = 0; i <= kButtonCount; i++) {
             // the menus' controls are not in the editor: always the preset's
             if (i != kStick && kButtons[i].when == When::Menus) continue;
@@ -721,7 +723,7 @@ void SaveLayout() {
                         toml::table{{"x", double(p.x)}, {"y", double(p.y)}, {"r", double(p.r)}, {"hidden", p.hidden}});
     }
     toml::table t{{"preset", kPresets[g_preset].id}, {"opacity", double(g_opacity)}, {"scale", double(g_scale)},
-                  {"skin", kSkinIds[g_skin]}, {"controls", controls}};
+                  {"skin", kSkinIds[g_skin]}, {"stick", g_fixed_stick ? "fixed" : "floating"}, {"controls", controls}};
     std::ofstream(LayoutFile()) << t << "\n";
 }
 
@@ -825,6 +827,12 @@ size_t HitButton(float x, float y) {
         if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) return i;
     }
     return kButtonCount;
+}
+
+// on the stick's circle, with the buttons' slack: a fixed stick moved out of the left of the screen still takes it
+bool InStick(float x, float y) {
+    float cx = g_layout[kStick].x * Width(), cy = g_layout[kStick].y * Height(), r = Radius(kStick) * 1.25f;
+    return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
 }
 
 void UpdateStick(const Finger& f) {
@@ -936,8 +944,14 @@ void FingerDown(SDL_FingerID id, float x, float y) {
         f.menu = MenuTouch::Undecided;
         f.down_ms = NowMs();
         g_cursor_touch = true;
-    } else if (x < Width() * kStickZone) {
+    } else if (x < Width() * kStickZone || (g_fixed_stick && InStick(x, y))) {
         f.role = Role::Stick;
+        // fixed: pushed from its own centre, at once wherever the thumb came down
+        if (g_fixed_stick) {
+            f.x0 = g_layout[kStick].x * Width();
+            f.y0 = g_layout[kStick].y * Height();
+            UpdateStick(f);
+        }
     } else {
         f.role = Role::Look;
     }
@@ -1399,7 +1413,7 @@ void SkinImage(ImDrawList* dl, SkinPart part, ImVec2 c, float r, ImU32 tint) {
 }
 
 void DrawStick(ImDrawList* dl, float th) {
-    // at rest in its place, else where the thumb came down
+    // at rest in its place, else where the thumb came down (its place too, when fixed)
     float r = Radius(kStick);
     ImVec2 at(g_layout[kStick].x * Width(), g_layout[kStick].y * Height());
     bool held = false;
@@ -1593,6 +1607,19 @@ void StepSkin(int step) {
     std::lock_guard lock(g_lock);
     EnsureLayout();
     g_skin = (g_skin + (step > 0 ? 1 : kSkins - 1)) % kSkins;
+    SaveLayout();
+}
+
+const char* StickModeName() {
+    std::lock_guard lock(g_lock);
+    EnsureLayout();
+    return g_fixed_stick ? "FIXED" : "FLOATING";
+}
+
+void StepStickMode(int) {
+    std::lock_guard lock(g_lock);
+    EnsureLayout();
+    g_fixed_stick ^= true;
     SaveLayout();
 }
 
