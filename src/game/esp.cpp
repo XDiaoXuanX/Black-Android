@@ -1,6 +1,6 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
 // drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims in the view
-// turns to the body of the living enemy nearest the crosshair
+// turns to the head of the living enemy nearest the crosshair
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -32,7 +32,7 @@ constexpr float kHeight = 1.8f;      // world units are metres: the near plane i
 constexpr float kBoxWidth = 0.45f;   // of the box's height
 constexpr float kNear = 0.08f;       // clip w nearer than this is behind the camera
 constexpr float kThickness = 1.5f;   // lines of a 480 frame
-constexpr float kChest = 1.2f;       // above the feet, where the aimbot aims: the body, a bigger hit than the head
+constexpr float kHead = 1.65f;       // above the feet, where the aimbot aims: the head, a smaller but lethal hit
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 constexpr float kPull = 1.0f;        // of the turn to the target, a frame
 constexpr float kDegrees = 180.0f / 3.14159265f;
@@ -139,8 +139,8 @@ void Aimbot(X86Context& ctx) {
         uint32_t who = g_seen[i].who;
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         const float* at = &G<float>(who + kCharPosition);
-        float chest[3] = {at[0], at[1] + kChest, at[2]}, clip[4];
-        if (!Clip(chest, clip)) continue;
+        float head[3] = {at[0], at[1] + kHead, at[2]}, clip[4];
+        if (!Clip(head, clip)) continue;
         float y = -std::atan(clip[0] / clip[3] / g_projection[0]) * kDegrees;
         float p = -std::atan(clip[1] / clip[3] / g_projection[5]) * kDegrees;
         float off = std::sqrt(y * y + p * p);
