@@ -135,7 +135,7 @@ jobs:
         run: |
           set -e
           KEYSTORE_PATH="${HOME}/.android/release.keystore"
-          KEY_ALIAS_VAL="${KEY_ALIAS:-black-android-ci}"
+          KEY_ALIAS_VAL="${KEY_ALIAS:-black-ci}"
           KS_PASSWORD="${KEYSTORE_PASSWORD:-}"
           KEY_PASSWORD_VAL="${KEY_PASSWORD:-}"
 
@@ -143,8 +143,8 @@ jobs:
 
           if [ -z "$KS_PASSWORD" ]; then
             echo "WARNING: No keystore password secret set - using temporary insecure password." >&2
-            KS_PASSWORD="black-android-ci-temp"
-            KEY_PASSWORD_VAL="black-android-ci-temp"
+            KS_PASSWORD="black-ci-temp"
+            KEY_PASSWORD_VAL="black-ci-temp"
           elif [ -z "$KEY_PASSWORD_VAL" ]; then
             # PKCS12 usually shares storepass/keypass, but be explicit.
             KEY_PASSWORD_VAL="$KS_PASSWORD"
@@ -167,7 +167,7 @@ jobs:
               -validity 10000 \
               -storepass "$KS_PASSWORD" \
               -keypass "$KEY_PASSWORD_VAL" \
-              -dname "CN=Black Android CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              -dname "CN=Black CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
               2>/dev/null
           fi
 
