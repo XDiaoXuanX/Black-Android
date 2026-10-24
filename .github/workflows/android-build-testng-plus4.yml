@@ -2,11 +2,13 @@
 #
 # Runs:
 #  - v* tag: builds and publishes a release, as before.
-#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input; the APK is attached
-#    to the run as an artifact and nothing is published. This is the "preview build from a branch" path for the real
-#    app. It still needs the secrets below: the recompiler cannot run without the decrypted default.xbe.
-#  - pull request: not run here. It needs a 10-90 minute Windows job and the game key; use the UI Preview workflow to
-#    test the interface from a branch without it.
+#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input;
+#    the APK is attached to the run as an artifact and nothing is published. This is the
+#    "preview build from a branch" path for the real app. It still needs the secrets below:
+#    the recompiler cannot run without the decrypted default.xbe. `applicationId` is passed down
+#    to build.bat, which patches app/build.gradle(.kts) before Gradle runs.
+#  - pull request: not run here. It needs a 10-90 minute Windows job and the game key; use the
+#    UI Preview workflow to test the interface from a branch without it.
 #
 # Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (the release .jks in base64),
 # KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without the keystore the APK has a debug signature.
@@ -58,41 +60,6 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0  # the tags and commits, for the list of changes since the previous release
           persist-credentials: false
-
-      - name: Customize applicationId
-        if: ${{ github.event.inputs.applicationId != '' }}
-        shell: bash
-        env:
-          APP_ID: ${{ github.event.inputs.applicationId }}
-        run: |
-          set -euo pipefail
-
-          # Format check: at least two segments, each starting with a letter
-          if ! [[ "$APP_ID" =~ ^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$ ]]; then
-            echo "::error::Invalid applicationId '$APP_ID'. Example: com.example.racasblack"
-            exit 1
-          fi
-
-          gradle_file=""
-          for f in app/build.gradle.kts app/build.gradle; do
-            if [ -f "$f" ]; then gradle_file="$f"; break; fi
-          done
-          if [ -z "$gradle_file" ]; then
-            echo "::error::app/build.gradle or app/build.gradle.kts not found"
-            exit 1
-          fi
-
-          # Handle both syntaxes: Kotlin (= "x") and Groovy ("x")
-          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
-          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
-
-          if ! grep -q "applicationId.*[\"']$APP_ID[\"']" "$gradle_file"; then
-            echo "::error::Failed to patch applicationId in $gradle_file"
-            grep -n "applicationId" "$gradle_file" || true
-            exit 1
-          fi
-          echo "applicationId -> $APP_ID"
-          grep -n "applicationId" "$gradle_file"
 
       - uses: actions/setup-java@v5
         with:
@@ -180,6 +147,8 @@ jobs:
 
       - name: Build
         shell: cmd
+        env:
+          APP_ID: ${{ github.event.inputs.applicationId }}
         run: call build.bat
 
       - name: Name the APK
