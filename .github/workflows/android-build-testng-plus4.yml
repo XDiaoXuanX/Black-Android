@@ -12,8 +12,10 @@
 # touching app/build.gradle. It is applied by ci/init-custom-package.gradle and is ignored on v* tag builds
 # so that tagged releases always stay canonical (com.racas.black).
 #
-# Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (the release .jks in base64),
-# KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
+# Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc). For proper release signing also set
+# KEYSTORE_BASE64 (the release .jks in base64), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
+# Without KEYSTORE_BASE64 a temporary CI keystore is generated - useful for preview builds, but
+# users on the previous signed APK cannot update to this build.
 name: Build Android CI ( Plus+ )
 
 on:
@@ -98,15 +100,42 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Publishing requires the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
-            exit 1
+          set -e
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          alias="${KEY_ALIAS:-black-android-ci}"
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            # Real release keystore from secrets - users on the previous signed APK can update.
+            if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+              echo "::error::KEYSTORE_BASE64 is set but KEYSTORE_PASSWORD and/or KEY_PASSWORD is missing."
+              exit 1
+            fi
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+            echo "Using release keystore from KEYSTORE_BASE64 (alias: $alias)"
+          else
+            # No keystore secret: generate a throwaway CI keystore so the build still succeeds,
+            # but users on the previous signed APK will NOT be able to update.
+            echo "::warning::KEYSTORE_BASE64 is not set - generating a temporary CI keystore. Users on the previous signed APK cannot install this build."
+            KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-black-android-ci-temp}"
+            KEY_PASSWORD="${KEY_PASSWORD:-black-android-ci-temp}"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype PKCS12 \
+              -alias "$alias" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              -dname "CN=Black Android CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              2>/dev/null
+            echo "Generated temporary CI keystore (alias: $alias)"
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
           {
-            echo "BLACK_KEYSTORE=$RUNNER_TEMP/release.jks"
+            echo "BLACK_KEYSTORE=$KEYSTORE_PATH"
             echo "BLACK_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-            echo "BLACK_KEY_ALIAS=$KEY_ALIAS"
+            echo "BLACK_KEY_ALIAS=$alias"
             echo "BLACK_KEY_PASSWORD=$KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
