@@ -504,6 +504,11 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             return true;
         default:
             return false;
+        case kMsaa:
+           std::snprintf(text, sizeof(text), "%s", kMsaaNames[StepTable(kMsaaValues, o.msaa, step)]);
+           return true;
+        default:
+           return false;
     }
 }
 
