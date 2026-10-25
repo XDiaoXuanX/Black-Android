@@ -3308,7 +3308,8 @@ void VulkanBackend::UploadSkin() {
 }
 
 // textures kept by count and by bytes: without BC (PowerVR, Mali) DXT is decoded to BGRA, 4 to 8 times its size, and a
-// thousand of those ran a phone out of memory within minutes
+// textures kept by count and by bytes: without BC (PowerVR, Mali) DXT is decoded to BGRA, 4 to 8 times its size, and a
+// thousand of those ran a phone out of memory within minutes (#17)
 void VulkanBackend::ReleaseOldTextures() {
     constexpr uint64_t kSweepEvery = 60;
     constexpr size_t kTexturesKept = 1024;  // a phone has less memory than a PC: fewer kept
@@ -3329,8 +3330,7 @@ void VulkanBackend::ReleaseOldTextures() {
             ++it;
         }
     }
-}
-if (bytes <= kTextureBytes) return;
+    if (bytes <= kTextureBytes) return;
     // still over: the least recently drawn go, but none drawn in the last second; those are made again when drawn
     std::sort(lru.begin(), lru.end());
     for (const auto& [frame, key] : lru) {
