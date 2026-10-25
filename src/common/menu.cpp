@@ -510,7 +510,7 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
     switch (id) {
         case kRapidFire:
             // off, then 2 to 4 times the rate
-            if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 4, 1, step));
+            if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 8, 1, step));
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
