@@ -94,6 +94,7 @@ const app::GameInfo app::kGame = {
                 {"reload_blur", &game::Opt().reload_blur, nullptr},
                 {"bloom", &game::Opt().bloom, nullptr},
                 {"fog", &game::Opt().fog, nullptr},
+                {"msaa", nullptr, &game::Opt().msaa},
                 {"anti_aliasing", nullptr, &game::Opt().anti_aliasing},
                 {"hdr", &game::Opt().hdr, nullptr},
                 {"fmv_scale", nullptr, &game::Opt().fmv_scale},
