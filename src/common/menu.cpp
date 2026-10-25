@@ -468,6 +468,9 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s",
                           kAntiAliasingNames[StepTable(kAntiAliasings, o.anti_aliasing, step)]);
             return true;
+        case kMsaa:
+           std::snprintf(text, sizeof(text), "%s", kMsaaNames[StepTable(kMsaaValues, o.msaa, step)]);
+           return true;
         case kScreenFilter:
             std::snprintf(text, sizeof(text), "%s",
                           kScreenFilterNames[StepTable(kScreenFilters, o.screen_filter, step)]);
@@ -504,11 +507,6 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             return true;
         default:
             return false;
-        case kMsaa:
-           std::snprintf(text, sizeof(text), "%s", kMsaaNames[StepTable(kMsaaValues, o.msaa, step)]);
-           return true;
-        default:
-           return false;
     }
 }
 
