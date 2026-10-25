@@ -302,6 +302,10 @@ at = 0x1BB2D6
 call = "FieldOfView"
 
 [[hook]]
+at = 0x2034D6
+call = "LodTangent"
+
+[[hook]]
 at = 0x16B312
 call = "FlashSprite"
 
@@ -484,6 +488,10 @@ call = "DistanceShorterSquared"
 [[hook]]
 at = 0x1CA65F
 call = "PropLimit"
+
+[[hook]]
+at = 0x16DF4D
+call = "ParticleView"
 
 [[hook]]
 at = 0x16DFFB
