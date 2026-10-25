@@ -96,6 +96,8 @@ constexpr uint32_t kAnisoValues[] = {0, 2, 4, 8, 16};
 const char* const kAnisoNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "16x"};
 constexpr uint32_t kDistances[] = {1, 2, 4, 8, 12, 16};
 const char* const kDistanceNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "12x", "16x"};
+constexpr uint32_t kMsaaValues[] = {0, 2, 4, 8};
+const char* const kMsaaNames[] = {"OFF", "2x", "4x", "8x"};
 constexpr uint32_t kAntiAliasings[] = {0, 1, 2};
 const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 constexpr uint32_t kFmvScales[] = {0, 1};
@@ -247,7 +249,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
+             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold };
 
 using rows::Kind;
@@ -277,6 +279,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kBloom, "BLOOM"},
     {Kind::Value, kFog, "FOG"},
     {Kind::Value, kAntiAliasing, "ANTI-ALIASING"},
+    {Kind::Value, kMsaa, "MSAA"},
     {Kind::Value, kHdr, "HDR"},
 };
 
