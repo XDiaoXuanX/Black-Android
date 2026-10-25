@@ -3308,8 +3308,7 @@ void VulkanBackend::UploadSkin() {
 }
 
 // textures kept by count and by bytes: without BC (PowerVR, Mali) DXT is decoded to BGRA, 4 to 8 times its size, and a
-// textures kept by count and by bytes: without BC (PowerVR, Mali) DXT is decoded to BGRA, 4 to 8 times its size, and a
-// thousand of those ran a phone out of memory within minutes (#17)
+// thousand of those ran a phone out of memory within minutes
 void VulkanBackend::ReleaseOldTextures() {
     constexpr uint64_t kSweepEvery = 60;
     constexpr size_t kTexturesKept = 1024;  // a phone has less memory than a PC: fewer kept
