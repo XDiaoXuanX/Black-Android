@@ -36,7 +36,8 @@ constexpr float kHead = 1.65f;       // above the feet, where the aimbot aims: t
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 constexpr float kPull = 1.0f;        // of the turn to the target, a frame
 constexpr float kDegrees = 180.0f / 3.14159265f;
-constexpr float kColour[4] = {1.0f, 0.125f, 0.125f, 1.0f};  // rgba
+// soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
+constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
 
 // an enemy is drawn while its update ran this recently: none once the game pauses, no flicker between ticks
 constexpr auto kSeen = std::chrono::milliseconds(250);
