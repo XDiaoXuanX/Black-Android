@@ -368,7 +368,7 @@ X86_FUNC(sub_001EEFD0) {
     RestoreAmmo(weapon, kept);
     uint32_t me = R32(weapon + kWeaponOwner);
     // the rapid fire cheat: a shot's wait, its fire mode's +0x20, is that many times shorter
-    uint32_t faster = std::clamp(game::Opt().rapid_fire, 1u, 4u);
+    uint32_t faster = std::clamp(game::Opt().rapid_fire, 1u, 8u);
     if (shot && me == Player() && wait > 0) wait /= float(faster);
     if (me == Player()) {
         if (R32(weapon + kWeaponState) != 1 || wait != rest) g_idle_early = false;
