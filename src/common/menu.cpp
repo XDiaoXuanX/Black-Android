@@ -94,8 +94,8 @@ constexpr std::pair<ImGuiCol, ImVec4> kPanelColors[] = {
 
 constexpr uint32_t kAnisoValues[] = {0, 2, 4, 8, 16};
 const char* const kAnisoNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "16x"};
-constexpr uint32_t kDistances[] = {1, 2, 4, 8};
-const char* const kDistanceNames[] = {"GAME DEFAULT", "2x", "4x", "8x"};
+constexpr uint32_t kDistances[] = {1, 2, 4, 8, 12, 16};
+const char* const kDistanceNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "12x", "16x"};
 constexpr uint32_t kAntiAliasings[] = {0, 1, 2};
 const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 constexpr uint32_t kFmvScales[] = {0, 1};
