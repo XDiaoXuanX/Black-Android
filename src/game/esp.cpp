@@ -1,6 +1,7 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
 // drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims in the view
-// turns to the head of the living enemy nearest the crosshair
+// turns to whichever of the neck and head of the living enemy nearest the crosshair reads closer, so the focus
+// follows the area the player is aiming at
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -32,7 +33,11 @@ constexpr float kHeight = 1.8f;      // world units are metres: the near plane i
 constexpr float kBoxWidth = 0.45f;   // of the box's height
 constexpr float kNear = 0.08f;       // clip w nearer than this is behind the camera
 constexpr float kThickness = 1.5f;   // lines of a 480 frame
-constexpr float kHead = 1.65f;       // above the feet, where the aimbot aims: the head, a smaller but lethal hit
+// where the aimbot aims, above the feet: the neck is the widest lethal zone, the head (just under the crown) the
+// smaller but more lethal one. Both are tried per enemy and the closer to the crosshair wins, so the focus
+// follows whichever area the player is actually pointing at
+constexpr float kNeck = 1.55f;
+constexpr float kHead = 1.66f;
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 constexpr float kPull = 1.0f;        // of the turn to the target, a frame
 constexpr float kDegrees = 180.0f / 3.14159265f;
@@ -127,7 +132,9 @@ void EspCamera() {
 }
 
 // esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw; while the
-// player aims in. The turn is read off the projection, the angles of the target from the middle of the view
+// player aims in. The turn is read off the projection, the angles of the target from the middle of the view.
+// Each enemy offers two candidate points (neck and head); the closer of the two to the crosshair is kept for
+// that enemy, and then the closest enemy overall wins. That way the focus follows the area being aimed at.
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
@@ -140,12 +147,18 @@ void Aimbot(X86Context& ctx) {
         uint32_t who = g_seen[i].who;
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         const float* at = &G<float>(who + kCharPosition);
-        float head[3] = {at[0], at[1] + kHead, at[2]}, clip[4];
-        if (!Clip(head, clip)) continue;
-        float y = -std::atan(clip[0] / clip[3] / g_projection[0]) * kDegrees;
-        float p = -std::atan(clip[1] / clip[3] / g_projection[5]) * kDegrees;
-        float off = std::sqrt(y * y + p * p);
-        if (off < best) best = off, yaw = y, pitch = p;
+        // try neck and head; take whichever reads closer to the crosshair for this enemy
+        float enemyBest = kCone, enemyYaw = 0, enemyPitch = 0;
+        for (float h : {kNeck, kHead}) {
+            float point[3] = {at[0], at[1] + h, at[2]}, clip[4];
+            if (!Clip(point, clip)) continue;
+            float y = -std::atan(clip[0] / clip[3] / g_projection[0]) * kDegrees;
+            float p = -std::atan(clip[1] / clip[3] / g_projection[5]) * kDegrees;
+            float off = std::sqrt(y * y + p * p);
+            if (off < enemyBest) enemyBest = off, enemyYaw = y, enemyPitch = p;
+        }
+        // and across all enemies, keep the one closest to the crosshair
+        if (enemyBest < best) best = enemyBest, yaw = enemyYaw, pitch = enemyPitch;
     }
     G<float>(c + kControllerYaw) += yaw * kPull;
     G<float>(c + kControllerPitch) += pitch * kPull;
