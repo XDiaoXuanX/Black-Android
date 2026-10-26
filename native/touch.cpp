@@ -559,16 +559,7 @@ constexpr Button kButtons[] = {
 };
 constexpr size_t kZoomButton = std::size(kButtons) - 1;
 constexpr float kScoped = 0.6f;  // game::g_zoom under this is a scope's, not a rifle's sights
-// the scope's levels, X2 to X10: the turn scales by a half at X2, a quarter at X5 (not a fifth, as the game has
-// it), and keeps the geometric steps between up to X10. A reading of game::g_zoom takes the level whose scale it
-// is nearest, by the middle between the levels' scales
-constexpr const char* kScopeNames[] = {"X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10"};
-constexpr float kScopeMids[] = {0.445f, 0.354f, 0.281f, 0.223f, 0.177f, 0.140f, 0.111f, 0.088f};
-int ScopeLevel(float zoom) {
-    for (int i = 0; i < int(std::size(kScopeMids)); i++)
-        if (zoom >= kScopeMids[i]) return i + 2;
-    return 10;
-}
+constexpr float kScopeX5 = 0.36f;  // and under this its X5, between X2's 0.5 and X5's 0.25
 constexpr size_t kButtonCount = std::size(kButtons);
 constexpr size_t kStick = kButtonCount;  // the stick's place, after the buttons'
 
@@ -1362,9 +1353,9 @@ void DrawIcon(const Pen& p, Icon icon) {
             p.Line(-0.36f, -0.14f, 0, 0.22f);
             p.Line(0, 0.22f, 0.36f, -0.14f);
             break;
-        case Icon::Zoom: {  // the scope's level, X2 to X10; the editor shows X2
-            const char* text =
-                !g_editing && game::g_zoom < kScoped ? kScopeNames[ScopeLevel(game::g_zoom) - 2] : "X2";
+        case Icon::Zoom: {  // the scope's level, X2 or X5: the turn scales by a half at X2, a quarter at X5, not a
+            // fifth, so by which it is nearer; the editor shows X2
+            const char* text = !g_editing && game::g_zoom < kScopeX5 ? "X5" : "X2";
             float size = p.r * 0.8f;
             ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, text);
             p.dl->AddText(ImGui::GetFont(), size, ImVec2(p.c.x - ts.x / 2, p.c.y - ts.y / 2), p.col, text);
