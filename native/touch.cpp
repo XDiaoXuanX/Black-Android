@@ -554,12 +554,14 @@ constexpr Button kButtons[] = {
     {"panel", "Panel", Icon::Gear, kPanel, When::Always},
     // confirm in the menus, as a pad's A, where a tap on the row is hard to aim
     {"enter", "Enter", Icon::Enter, kAnalogA, When::Menus},
-    // the firing mode's button again, beside use while a scope is up: the scope's level, X2 or X5, and a tap switches
+    // the firing mode's button again, beside use while a scope is up: the scope's level, X2, X5 or X10, and a tap
+    // switches
     {"zoom", "Scope zoom", Icon::Zoom, kBit + 0, When::Play},
 };
 constexpr size_t kZoomButton = std::size(kButtons) - 1;
 constexpr float kScoped = 0.6f;  // game::g_zoom under this is a scope's, not a rifle's sights
 constexpr float kScopeX5 = 0.36f;  // and under this its X5, between X2's 0.5 and X5's 0.25
+constexpr float kScopeX10 = 0.19f;  // and under this its X10, between X5's 0.25 and X10's 0.125
 constexpr size_t kButtonCount = std::size(kButtons);
 constexpr size_t kStick = kButtonCount;  // the stick's place, after the buttons'
 
@@ -1353,9 +1355,13 @@ void DrawIcon(const Pen& p, Icon icon) {
             p.Line(-0.36f, -0.14f, 0, 0.22f);
             p.Line(0, 0.22f, 0.36f, -0.14f);
             break;
-        case Icon::Zoom: {  // the scope's level, X2 or X5: the turn scales by a half at X2, a quarter at X5, not a
-            // fifth, so by which it is nearer; the editor shows X2
-            const char* text = !g_editing && game::g_zoom < kScopeX5 ? "X5" : "X2";
+        case Icon::Zoom: {  // the scope's level, X2, X5 or X10: the turn scales by a half at X2, a quarter at X5 and
+            // an eighth at X10, not a fifth nor a tenth, so by which it is nearer; the editor shows X2
+            const char* text = "X2";
+            if (!g_editing) {
+                if (game::g_zoom < kScopeX10) text = "X10";
+                else if (game::g_zoom < kScopeX5) text = "X5";
+            }
             float size = p.r * 0.8f;
             ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, text);
             p.dl->AddText(ImGui::GetFont(), size, ImVec2(p.c.x - ts.x / 2, p.c.y - ts.y / 2), p.col, text);
