@@ -87,7 +87,7 @@ app::Mode ScreenMode() {
         if (w > 0 && h > 0) return {uint32_t(w), uint32_t(h)};
     }
     const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
-    if (!m) return {1920, 1080};
+    if (!m) return {1280, 720};
     uint32_t w = uint32_t(m->w * m->pixel_density), h = uint32_t(m->h * m->pixel_density);
     return {std::max(w, h), std::min(w, h)};
 }
