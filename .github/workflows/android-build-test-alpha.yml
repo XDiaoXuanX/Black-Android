@@ -10,7 +10,7 @@
 #
 # Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (the release .jks in base64),
 # KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without the keystore the APK has a debug signature.
-name: Build Android CI ( Plus+ )
+name: Build Black Android CI ( Plus+ )
 
 on:
   workflow_dispatch:
