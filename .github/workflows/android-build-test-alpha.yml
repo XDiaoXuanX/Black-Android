@@ -93,6 +93,47 @@ jobs:
           echo "applicationId -> $APP_ID"
           grep -n "applicationId" "$gradle_file"
 
+      # ==== NEW: force minSdk to Android 8 (API 26) ====
+      # Changes minSdk 29 -> 26 directly in the Gradle file before the build.
+      # Supports Kotlin syntax (minSdk = 29) and Groovy syntax (minSdkVersion 29 / minSdk 29).
+      - name: Set minSdk to Android 8 (API 26)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle_file=""
+          for f in app/build.gradle.kts app/build.gradle; do
+            if [ -f "$f" ]; then gradle_file="$f"; break; fi
+          done
+          if [ -z "$gradle_file" ]; then
+            echo "::error::app/build.gradle or app/build.gradle.kts not found"
+            exit 1
+          fi
+
+          echo "Patch file: $gradle_file"
+          echo "Before:"
+          grep -n "minSdk" "$gradle_file" || true
+
+          # Kotlin DSL:     minSdk = 29
+          sed -i -E "s|minSdk([[:space:]]*=[[:space:]]*)29|minSdk\126|g" "$gradle_file"
+          # Groovy DSL:     minSdkVersion 29
+          sed -i -E "s|minSdkVersion([[:space:]]+)29|minSdkVersion\126|g" "$gradle_file"
+          # Groovy DSL alt: minSdk 29
+          sed -i -E "s|minSdk([[:space:]]+)29|minSdk\126|g" "$gradle_file"
+
+          # Verify
+          if grep -qE "minSdk(Version)?[[:space:]]*=?[[:space:]]*26" "$gradle_file"; then
+            echo "minSdk -> 26 (Android 8.0) OK"
+          else
+            echo "::error::Failed to set minSdk=26 in $gradle_file"
+            grep -n "minSdk" "$gradle_file" || true
+            exit 1
+          fi
+
+          echo "After:"
+          grep -n "minSdk" "$gradle_file"
+      # ==== /NEW ====
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -182,7 +223,7 @@ jobs:
         run: |
           setlocal
 
-          rem Fallback kalau ANDROID_HOME tidak di-set runner
+          rem Fallback if ANDROID_HOME is not set by the runner
           if not defined ANDROID_HOME set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
 
           set "TOOLS=%CD%\out\build\android-tools"
@@ -200,7 +241,7 @@ jobs:
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul
           set "PATH=%SDKCMAKE%;%PATH%"
 
-          rem Clang dari VS kalau ada, kalau tidak pakai milik NDK
+          rem Clang from VS if present, otherwise the one from the NDK
           set "CLANGCL=%VSDIR%\VC\Tools\Llvm\x64\bin\clang-cl.exe"
           if not exist "%CLANGCL%" set "CLANGCL=%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe"
 
@@ -214,7 +255,7 @@ jobs:
           echo [3/4] Recompiling default.xbe into generated\game
           "%TOOLS%\xbe_recomp.exe" config\game.toml --xdk "%SDK%\xdk" >nul || exit /b 1
 
-          echo [4/4] APK - arm64, 30 sampai 90 menit build pertama
+          echo [4/4] APK - arm64, 30 to 90 minutes for the first build
           if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
           call gradlew.bat assembleRelease %GRADLE_ARGS% || exit /b 1
 
