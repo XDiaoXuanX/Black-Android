@@ -93,8 +93,8 @@ jobs:
           echo "applicationId -> $APP_ID"
           grep -n "applicationId" "$gradle_file"
 
-      # ==== NEW: force minSdk to Android 8 (API 26) ====
-      # Changes minSdk 29 -> 26 directly in the Gradle file before the build.
+      # ==== NEW: force minSdk to Android 9 (API 28) ====
+      # Changes minSdk 29 -> 28 directly in the Gradle file before the build.
       # Supports Kotlin syntax (minSdk = 29) and Groovy syntax (minSdkVersion 29 / minSdk 29).
       - name: Set minSdk to Android 9 (API 28)
         shell: bash
