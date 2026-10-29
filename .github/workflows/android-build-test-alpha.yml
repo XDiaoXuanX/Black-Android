@@ -1,0 +1,288 @@
+# Builds the full APK with the native renderer and the recompiled game.
+#
+# Runs:
+#  - v* tag: builds and publishes a release, as before.
+#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input; the APK is attached
+#    to the run as an artifact and nothing is published. This is the "preview build from a branch" path for the real
+#    app. It still needs the secrets below: the recompiler cannot run without the decrypted default.xbe.
+#  - pull request: not run here. It needs a 10-90 minute Windows job and the game key; use the UI Preview workflow to
+#    test the interface from a branch without it.
+#
+# Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (the release .jks in base64),
+# KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without the keystore the APK has a debug signature.
+name: Build Android CI ( Plus+ )
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to build (empty: the branch this run was started from)"
+        type: string
+        default: ""
+      version:
+        description: "Version name (empty: the v* tag, or preview-<run> for a manual build)"
+        type: string
+        default: ""
+      applicationId:
+        description: "Custom applicationId, e.g. com.racas.black (empty: keep the one in build.gradle)"
+        required: false
+        default: "com.racas.black"
+        type: choice
+        options:
+          - com.racas.black
+          - com.racas.black.custom
+          - com.antutu.ABenchMark
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 300
+    env:
+      NDK_VERSION: 28.2.13676358
+      CMAKE_VERSION: 3.31.6
+
+    steps:
+      - name: Check out the chosen ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0  # the tags and commits, for the list of changes since the previous release
+          persist-credentials: false
+
+      - name: Customize applicationId
+        if: ${{ github.event.inputs.applicationId != '' }}
+        shell: bash
+        env:
+          APP_ID: ${{ github.event.inputs.applicationId }}
+        run: |
+          set -euo pipefail
+
+          # Format check: at least two segments, each starting with a letter
+          if ! [[ "$APP_ID" =~ ^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$ ]]; then
+            echo "::error::Invalid applicationId '$APP_ID'. Example: com.example.racasblack"
+            exit 1
+          fi
+
+          gradle_file=""
+          for f in app/build.gradle.kts app/build.gradle; do
+            if [ -f "$f" ]; then gradle_file="$f"; break; fi
+          done
+          if [ -z "$gradle_file" ]; then
+            echo "::error::app/build.gradle or app/build.gradle.kts not found"
+            exit 1
+          fi
+
+          # Handle both syntaxes: Kotlin (= "x") and Groovy ("x")
+          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+
+          if ! grep -q "applicationId.*[\"']$APP_ID[\"']" "$gradle_file"; then
+            echo "::error::Failed to patch applicationId in $gradle_file"
+            grep -n "applicationId" "$gradle_file" || true
+            exit 1
+          fi
+          echo "applicationId -> $APP_ID"
+          grep -n "applicationId" "$gradle_file"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Android SDK packages
+        shell: cmd
+        run: call "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" --install "platforms;android-34" "ndk;%NDK_VERSION%" "cmake;%CMAKE_VERSION%" >nul
+
+      - name: Decrypt default.xbe
+        shell: bash
+        env:
+          XBE_KEY: ${{ secrets.XBE_KEY }}
+        run: |
+          if [ -z "$XBE_KEY" ]; then
+            echo "::error::The XBE_KEY secret is missing. The full build needs XBE_KEY and the four KEYSTORE_* secrets; add them in Settings -> Secrets and variables -> Actions. The UI Preview workflow needs no game key."
+            exit 1
+          fi
+          mkdir -p assets
+          # through a file: Git Bash rewrites an environment value that looks like a path (the key may start with /)
+          # before a Windows program such as openssl sees it
+          key="$RUNNER_TEMP/xbe.key"
+          printf '%s' "$XBE_KEY" > "$key"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in ci/default.xbe.enc -out assets/default.xbe -pass "file:$key"
+          rm -f "$key"
+          sha1sum assets/default.xbe
+
+      - name: Release key
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Tagged releases require the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "BLACK_KEYSTORE=$RUNNER_TEMP/release.jks"
+            echo "BLACK_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "BLACK_KEY_ALIAS=$KEY_ALIAS"
+            echo "BLACK_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Version
+        id: version
+        shell: bash
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_APP_ID: ${{ github.event.inputs.applicationId }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
+            name="${GITHUB_REF_NAME#v}"
+            source="tag $GITHUB_REF_NAME"
+            do_release=true
+          else
+            name="${INPUT_VERSION:-preview-${GITHUB_RUN_NUMBER}}"
+            source="${INPUT_REF:-$GITHUB_REF_NAME}"
+            do_release=false
+          fi
+          # the version goes into the APK and artifact names: keep it to characters those accept
+          name=$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
+          [ -z "$name" ] && name="preview-${GITHUB_RUN_NUMBER}"
+
+          # Only preview builds with a custom applicationId get a suffix
+          artifact="$name"
+          if [ "$do_release" != "true" ] && [ -n "$INPUT_APP_ID" ]; then
+            suffix=$(printf '%s' "$INPUT_APP_ID" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
+            [ -n "$suffix" ] && artifact="${name}-${suffix}"
+          fi
+
+          echo "name=$name"             >> "$GITHUB_OUTPUT"
+          echo "artifact=$artifact"     >> "$GITHUB_OUTPUT"
+          echo "source=$source"         >> "$GITHUB_OUTPUT"
+          echo "do_release=$do_release" >> "$GITHUB_OUTPUT"
+          echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: cmd
+        run: |
+          setlocal
+
+          rem Fallback kalau ANDROID_HOME tidak di-set runner
+          if not defined ANDROID_HOME set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+
+          set "TOOLS=%CD%\out\build\android-tools"
+          set "NDK=%ANDROID_HOME%\ndk\%NDK_VERSION%"
+          set "SDKCMAKE=%ANDROID_HOME%\cmake\%CMAKE_VERSION%\bin"
+
+          echo [1/4] Visual Studio environment
+          set "PF86=%ProgramFiles(x86)%"
+          set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
+          for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
+          if not defined VSDIR (
+              echo Visual Studio with "Desktop development with C++" was not found.
+              exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul
+          set "PATH=%SDKCMAKE%;%PATH%"
+
+          rem Clang dari VS kalau ada, kalau tidak pakai milik NDK
+          set "CLANGCL=%VSDIR%\VC\Tools\Llvm\x64\bin\clang-cl.exe"
+          if not exist "%CLANGCL%" set "CLANGCL=%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe"
+
+          echo [2/4] Recompiler
+          cmake -S tools -B "%TOOLS%" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=%CLANGCL%" "-DCMAKE_CXX_COMPILER=%CLANGCL%" >nul || exit /b 1
+          cmake --build "%TOOLS%" >nul || exit /b 1
+          set /p SDK=<"%TOOLS%\sdk_dir.txt"
+          set "SDK=%SDK:/=\%"
+          findstr /b /l /c:"[symbols]" config\game.toml >nul 2>nul || "%TOOLS%\xbe_symbols.exe" assets\default.xbe "%SDK%\xdk" --out config\game.toml || exit /b 1
+
+          echo [3/4] Recompiling default.xbe into generated\game
+          "%TOOLS%\xbe_recomp.exe" config\game.toml --xdk "%SDK%\xdk" >nul || exit /b 1
+
+          echo [4/4] APK - arm64, 30 sampai 90 menit build pertama
+          if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
+          call gradlew.bat assembleRelease %GRADLE_ARGS% || exit /b 1
+
+      - name: Name the APK
+        shell: bash
+        run: mv app/build/outputs/apk/release/app-release.apk "Black-${{ steps.version.outputs.artifact }}.apk"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: Black-${{ steps.version.outputs.artifact }}
+          path: Black-${{ steps.version.outputs.artifact }}.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Run summary
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+          ARTIFACT: ${{ steps.version.outputs.artifact }}
+          SOURCE: ${{ steps.version.outputs.source }}
+          DO_RELEASE: ${{ steps.version.outputs.do_release }}
+        run: |
+          APK="Black-$ARTIFACT.apk"
+          sha=$(sha256sum "$APK" | cut -d' ' -f1)
+          size=$(stat -c %s "$APK")
+          commit=$(git rev-parse --short=7 HEAD)
+          {
+            echo "## Black for Android \`$VERSION\`"
+            echo
+            echo "- Source: $SOURCE at \`$commit\`"
+            echo "- APK: \`$APK\` ($size bytes)"
+            echo "- SHA-256: \`$sha\`"
+            echo
+            echo "**Download:** open the **Artifacts** section at the bottom of this run page."
+            echo
+            echo '```'
+            echo "adb install -r $APK"
+            echo '```'
+            if [ "$DO_RELEASE" != "true" ]; then
+              echo
+              echo "Manual build: nothing was published. Merge the branch and push a \`v*\` tag to make a release."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release notes
+        if: steps.version.outputs.do_release == 'true'
+        shell: bash
+        run: |
+          apk="Black-${{ steps.version.outputs.artifact }}.apk"
+          size=$(awk -v b="$(stat -c %s "$apk")" 'BEGIN { printf "%.1f MB", b / 1048576 }')
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          sed -e "s|{{VERSION}}|$GITHUB_REF_NAME|g" -e "s|{{TAG}}|$GITHUB_REF_NAME|g" -e "s|{{APK}}|$apk|g" \
+              -e "s|{{SIZE}}|$size|g" -e "s|{{SHA256}}|$sha|g" ci/release-notes.md > "$RUNNER_TEMP/release-notes.md"
+          # the commits since the previous tag, which the app's update dialog shows too
+          prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          {
+            echo
+            echo "## What's Changed"
+            echo
+            git log --no-merges --pretty='* %s' ${prev:+"$prev.."}"$GITHUB_REF_NAME"
+          } >> "$RUNNER_TEMP/release-notes.md"
+
+      - name: Release
+        if: steps.version.outputs.do_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Black for Android ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          files: Black-${{ steps.version.outputs.artifact }}.apk
+          generate_release_notes: true
+          make_latest: true
