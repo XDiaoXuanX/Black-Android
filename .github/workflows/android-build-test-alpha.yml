@@ -96,7 +96,7 @@ jobs:
       # ==== NEW: force minSdk to Android 8 (API 26) ====
       # Changes minSdk 29 -> 26 directly in the Gradle file before the build.
       # Supports Kotlin syntax (minSdk = 29) and Groovy syntax (minSdkVersion 29 / minSdk 29).
-      - name: Set minSdk to Android 8 (API 26)
+      - name: Set minSdk to Android 9 (API 28)
         shell: bash
         run: |
           set -euo pipefail
@@ -115,17 +115,17 @@ jobs:
           grep -n "minSdk" "$gradle_file" || true
 
           # Kotlin DSL:     minSdk = 29
-          sed -i -E "s|minSdk([[:space:]]*=[[:space:]]*)29|minSdk\126|g" "$gradle_file"
+          sed -i -E "s|minSdk([[:space:]]*=[[:space:]]*)29|minSdk\128|g" "$gradle_file"
           # Groovy DSL:     minSdkVersion 29
-          sed -i -E "s|minSdkVersion([[:space:]]+)29|minSdkVersion\126|g" "$gradle_file"
+          sed -i -E "s|minSdkVersion([[:space:]]+)29|minSdkVersion\128|g" "$gradle_file"
           # Groovy DSL alt: minSdk 29
-          sed -i -E "s|minSdk([[:space:]]+)29|minSdk\126|g" "$gradle_file"
+          sed -i -E "s|minSdk([[:space:]]+)29|minSdk\128|g" "$gradle_file"
 
           # Verify
-          if grep -qE "minSdk(Version)?[[:space:]]*=?[[:space:]]*26" "$gradle_file"; then
-            echo "minSdk -> 26 (Android 8.0) OK"
+          if grep -qE "minSdk(Version)?[[:space:]]*=?[[:space:]]*28" "$gradle_file"; then
+            echo "minSdk -> 28 (Android 9.0) OK"
           else
-            echo "::error::Failed to set minSdk=26 in $gradle_file"
+            echo "::error::Failed to set minSdk=28 in $gradle_file"
             grep -n "minSdk" "$gradle_file" || true
             exit 1
           fi
