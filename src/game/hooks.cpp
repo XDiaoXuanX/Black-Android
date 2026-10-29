@@ -578,6 +578,7 @@ bool SoundCountdownTick(X86Context&, uint8_t*) {
     if (ticks < 1) return false;
     ticks -= 1;
     return true;
+}
 
 // xmm1 the gain of a shard's turn a frame
 void ShardSpinGain(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
