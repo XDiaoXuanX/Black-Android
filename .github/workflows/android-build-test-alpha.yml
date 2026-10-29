@@ -1,4 +1,4 @@
-android-build-# Builds the full APK with the native renderer and the recompiled game.
+# Builds the full APK with the native renderer and the recompiled game.
 #
 # Runs:
 #  - v* tag: builds and publishes a release, as before.
@@ -285,4 +285,4 @@ jobs:
           body_path: ${{ runner.temp }}/release-notes.md
           files: Black-${{ steps.version.outputs.artifact }}.apk
           generate_release_notes: true
-          make_latest: true-plus4.yml
+          make_latest: true
