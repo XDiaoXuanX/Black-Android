@@ -162,8 +162,8 @@ jobs:
           rm -f "$key"
           sha1sum assets/default.xbe
 
+      # ==== CHANGED: Release key (setup keystore, exports BLACK_* env vars for Gradle) ====
       - name: Release key
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -171,17 +171,46 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Tagged releases require the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
-            exit 1
+          set -e
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          KS_PASSWORD="$KEYSTORE_PASSWORD"
+          KPASSWORD="$KEY_PASSWORD"
+          ALIAS="${KEY_ALIAS:-black-ci}"
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            # Release keystore from secrets (tagged releases / production builds)
+            echo "Using release keystore from secrets..."
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          else
+            # Tagged release without a keystore must fail hard, because users on the previous signed APK will not be able to update
+            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              echo "::error::Tagged releases require the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
+              exit 1
+            fi
+            echo "WARNING: No release keystore secret set - generating a temporary CI keystore." >&2
+            [ -z "$KS_PASSWORD" ] && KS_PASSWORD="black-ci-temp"
+            [ -z "$KPASSWORD" ]   && KPASSWORD="black-ci-temp"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype PKCS12 \
+              -alias "$ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KS_PASSWORD" \
+              -keypass "$KPASSWORD" \
+              -dname "CN=BLACK CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              2>/dev/null
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+          # Export env for Gradle's signingConfig and the later signing step
           {
-            echo "BLACK_KEYSTORE=$RUNNER_TEMP/release.jks"
-            echo "BLACK_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-            echo "BLACK_KEY_ALIAS=$KEY_ALIAS"
-            echo "BLACK_KEY_PASSWORD=$KEY_PASSWORD"
+            echo "BLACK_KEYSTORE=$KEYSTORE_PATH"
+            echo "BLACK_KEYSTORE_PASSWORD=$KS_PASSWORD"
+            echo "BLACK_KEY_ALIAS=$ALIAS"
+            echo "BLACK_KEY_PASSWORD=$KPASSWORD"
           } >> "$GITHUB_ENV"
+      # ==== /CHANGED ====
 
       - name: Version
         id: version
@@ -262,6 +291,52 @@ jobs:
       - name: Name the APK
         shell: bash
         run: mv app/build/outputs/apk/release/app-release.apk "Black-${{ steps.version.outputs.artifact }}.apk"
+
+      # ==== NEW: Sign & verify with apksigner (re-signs over whatever Gradle produced) ====
+      - name: Sign & verify release APK
+        shell: cmd
+        run: |
+          setlocal enabledelayedexpansion
+          if not defined ANDROID_HOME set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+
+          if not defined BLACK_KEYSTORE (
+            echo ::error::BLACK_KEYSTORE is not set - the "Release key" step should have exported it.
+            exit /b 1
+          )
+          if not exist "%BLACK_KEYSTORE%" (
+            echo ::error::Keystore not found at %BLACK_KEYSTORE%
+            exit /b 1
+          )
+
+          rem Pick the newest build-tools directory (name-sorted descending)
+          set "BUILD_TOOLS="
+          for /f "delims=" %%d in ('dir /b /ad /o-n "%ANDROID_HOME%\build-tools" 2^>nul') do (
+            if not defined BUILD_TOOLS set "BUILD_TOOLS=%ANDROID_HOME%\build-tools\%%d"
+          )
+          if not defined BUILD_TOOLS (
+            echo ::error::No build-tools found under %ANDROID_HOME%\build-tools
+            exit /b 1
+          )
+
+          set "APK=Black-${{ steps.version.outputs.artifact }}.apk"
+          if not exist "!APK!" (
+            echo ::error::APK not found: !APK!
+            exit /b 1
+          )
+
+          echo Signing APK: !APK!
+          call "!BUILD_TOOLS!\apksigner.bat" sign ^
+            --ks "%BLACK_KEYSTORE%" ^
+            --ks-pass "pass:%BLACK_KEYSTORE_PASSWORD%" ^
+            --key-pass "pass:%BLACK_KEY_PASSWORD%" ^
+            --ks-key-alias "%BLACK_KEY_ALIAS%" ^
+            "!APK!"
+          if errorlevel 1 exit /b 1
+
+          echo Verifying signature...
+          call "!BUILD_TOOLS!\apksigner.bat" verify --verbose "!APK!"
+          if errorlevel 1 exit /b 1
+      # ==== /NEW ====
 
       - uses: actions/upload-artifact@v5
         with:
