@@ -224,11 +224,11 @@ jobs:
           if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
             name="${GITHUB_REF_NAME#v}"
             source="tag $GITHUB_REF_NAME"
-            do_release=true
+            release=true
           else
             name="${INPUT_VERSION:-preview-${GITHUB_RUN_NUMBER}}"
             source="${INPUT_REF:-$GITHUB_REF_NAME}"
-            do_release=false
+            release=false
           fi
           # the version goes into the APK and artifact names: keep it to characters those accept
           name=$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
@@ -236,15 +236,15 @@ jobs:
 
           # Only preview builds with a custom applicationId get a suffix
           artifact="$name"
-          if [ "$do_release" != "true" ] && [ -n "$INPUT_APP_ID" ]; then
+          if [ "$release" != "true" ] && [ -n "$INPUT_APP_ID" ]; then
             suffix=$(printf '%s' "$INPUT_APP_ID" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
             [ -n "$suffix" ] && artifact="${name}-${suffix}"
           fi
 
-          echo "name=$name"             >> "$GITHUB_OUTPUT"
-          echo "artifact=$artifact"     >> "$GITHUB_OUTPUT"
-          echo "source=$source"         >> "$GITHUB_OUTPUT"
-          echo "do_release=$do_release" >> "$GITHUB_OUTPUT"
+          echo "name=$name"         >> "$GITHUB_OUTPUT"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          echo "source=$source"     >> "$GITHUB_OUTPUT"
+          echo "release=$release"   >> "$GITHUB_OUTPUT"
           echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name" >> "$GITHUB_ENV"
 
       - name: Build
@@ -351,7 +351,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.name }}
           ARTIFACT: ${{ steps.version.outputs.artifact }}
           SOURCE: ${{ steps.version.outputs.source }}
-          DO_RELEASE: ${{ steps.version.outputs.do_release }}
+          RELEASE: ${{ steps.version.outputs.release }}
         run: |
           APK="Black-$ARTIFACT.apk"
           sha=$(sha256sum "$APK" | cut -d' ' -f1)
@@ -369,14 +369,14 @@ jobs:
             echo '```'
             echo "adb install -r $APK"
             echo '```'
-            if [ "$DO_RELEASE" != "true" ]; then
+            if [ "$RELEASE" != "true" ]; then
               echo
               echo "Manual build: nothing was published. Merge the branch and push a \`v*\` tag to make a release."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release notes
-        if: steps.version.outputs.do_release == 'true'
+        if: steps.version.outputs.release == 'true'
         shell: bash
         run: |
           apk="Black-${{ steps.version.outputs.artifact }}.apk"
@@ -394,7 +394,7 @@ jobs:
           } >> "$RUNNER_TEMP/release-notes.md"
 
       - name: Release
-        if: steps.version.outputs.do_release == 'true'
+        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: Black for Android ${{ github.ref_name }}
