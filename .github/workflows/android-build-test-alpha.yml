@@ -24,13 +24,13 @@ on:
         type: string
         default: ""
       applicationId:
-        description: "Custom applicationId, e.g. com.racas.black (empty: keep the one in build.gradle)"
+        description: "Custom applicationId, e.g. com.black.unofficial (empty: keep the one in build.gradle)"
         required: false
-        default: "com.racas.black"
+        default: "com.black.unofficial"
         type: choice
         options:
-          - com.racas.black
-          - com.racas.black.custom
+          - com.black.unofficial
+          - com.black.unofficial.custom
           - com.antutu.ABenchMark
   push:
     tags: ["v*"]
@@ -68,7 +68,7 @@ jobs:
 
           # Format check: at least two segments, each starting with a letter
           if ! [[ "$APP_ID" =~ ^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$ ]]; then
-            echo "::error::Invalid applicationId '$APP_ID'. Example: com.example.racasblack"
+            echo "::error::Invalid applicationId '$APP_ID'. Example: com.example.blackunofficial"
             exit 1
           fi
 
@@ -82,8 +82,8 @@ jobs:
           fi
 
           # Handle both syntaxes: Kotlin (= "x") and Groovy ("x")
-          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
-          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.black\\.unofficial[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.black\\.unofficial[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
 
           if ! grep -q "applicationId.*[\"']$APP_ID[\"']" "$gradle_file"; then
             echo "::error::Failed to patch applicationId in $gradle_file"
@@ -400,5 +400,5 @@ jobs:
           name: Black for Android ${{ github.ref_name }}
           body_path: ${{ runner.temp }}/release-notes.md
           files: Black-${{ steps.version.outputs.artifact }}.apk
-          generate_release_notes: true
+          generate_release_notes: false
           make_latest: true
