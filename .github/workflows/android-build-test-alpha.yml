@@ -13,6 +13,8 @@
 name: Build Black Android CI ( Plus+ )
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       ref:
@@ -32,8 +34,7 @@ on:
           - com.racas.black
           - com.racas.black.custom
           - com.antutu.ABenchMark
-  push:
-    tags: ["v*"]
+  
 
 permissions:
   contents: write
