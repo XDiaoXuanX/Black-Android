@@ -95,7 +95,7 @@ jobs:
           echo "applicationId -> $APP_ID"
           grep -n "applicationId" "$gradle_file"
 
-      # ==== NEW: force minSdk to Android 9 (API 28) ====
+      # ==== force minSdk to Android 9 (API 28) ====
       # Changes minSdk 29 -> 28 directly in the Gradle file before the build.
       # Supports Kotlin syntax (minSdk = 29) and Groovy syntax (minSdkVersion 29 / minSdk 29).
       - name: Set minSdk to Android 9 (API 28)
@@ -134,7 +134,6 @@ jobs:
 
           echo "After:"
           grep -n "minSdk" "$gradle_file"
-      # ==== /NEW ====
 
       - uses: actions/setup-java@v5
         with:
@@ -164,7 +163,7 @@ jobs:
           rm -f "$key"
           sha1sum assets/default.xbe
 
-      # ==== CHANGED: Release key (setup keystore, exports BLACK_* env vars for Gradle) ====
+      # ==== Release key (setup keystore, exports BLACK_* env vars for Gradle) ====
       - name: Release key
         shell: bash
         env:
@@ -212,7 +211,6 @@ jobs:
             echo "BLACK_KEY_ALIAS=$ALIAS"
             echo "BLACK_KEY_PASSWORD=$KPASSWORD"
           } >> "$GITHUB_ENV"
-      # ==== /CHANGED ====
 
       - name: Version
         id: version
@@ -249,6 +247,7 @@ jobs:
           echo "release=$release"   >> "$GITHUB_OUTPUT"
           echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name" >> "$GITHUB_ENV"
 
+      # ==== Build (merged from build.bat) ====
       - name: Build
         shell: cmd
         run: |
@@ -261,12 +260,33 @@ jobs:
           set "NDK=%ANDROID_HOME%\ndk\%NDK_VERSION%"
           set "SDKCMAKE=%ANDROID_HOME%\cmake\%CMAKE_VERSION%\bin"
 
-          echo [1/4] Visual Studio environment
+          rem ============================================================
+          echo [1/5] Tools
+          rem ============================================================
+          if not exist "%ANDROID_HOME%\platforms" (
+              echo ERROR: Android SDK platforms missing at %ANDROID_HOME%\platforms
+              exit /b 1
+          )
+          if not exist "%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe" (
+              echo ERROR: NDK %NDK_VERSION% missing at %NDK%
+              exit /b 1
+          )
+          if not exist "%SDKCMAKE%\cmake.exe" (
+              echo ERROR: CMake %CMAKE_VERSION% missing at %SDKCMAKE%
+              exit /b 1
+          )
+          where git >nul 2>nul
+          if errorlevel 1 (
+              echo ERROR: git is missing on PATH
+              exit /b 1
+          )
+
+          rem Visual Studio with the C++ toolchain
           set "PF86=%ProgramFiles(x86)%"
           set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
           for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
           if not defined VSDIR (
-              echo Visual Studio with "Desktop development with C++" was not found.
+              echo ERROR: Visual Studio with "Desktop development with C++" was not found.
               exit /b 1
           )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul
@@ -276,25 +296,74 @@ jobs:
           set "CLANGCL=%VSDIR%\VC\Tools\Llvm\x64\bin\clang-cl.exe"
           if not exist "%CLANGCL%" set "CLANGCL=%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe"
 
-          echo [2/4] Recompiler
-          cmake -S tools -B "%TOOLS%" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=%CLANGCL%" "-DCMAKE_CXX_COMPILER=%CLANGCL%" >nul || exit /b 1
-          cmake --build "%TOOLS%" >nul || exit /b 1
+          rem ============================================================
+          echo [2/5] Recompiler
+          rem ============================================================
+          if not exist "assets\default.xbe" (
+              echo ERROR: assets\default.xbe missing - the "Decrypt default.xbe" step must have run first.
+              exit /b 1
+          )
+
+          cmake -S tools -B "%TOOLS%" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=%CLANGCL%" "-DCMAKE_CXX_COMPILER=%CLANGCL%" >nul
+          if errorlevel 1 (
+              echo ERROR: CMake configure failed
+              exit /b 1
+          )
+          cmake --build "%TOOLS%" >nul
+          if errorlevel 1 (
+              echo ERROR: CMake build failed
+              exit /b 1
+          )
+
           set /p SDK=<"%TOOLS%\sdk_dir.txt"
+          if not defined SDK (
+              echo ERROR: sdk_dir.txt missing or empty
+              exit /b 1
+          )
           set "SDK=%SDK:/=\%"
-          findstr /b /l /c:"[symbols]" config\game.toml >nul 2>nul || "%TOOLS%\xbe_symbols.exe" assets\default.xbe "%SDK%\xdk" --out config\game.toml || exit /b 1
+          echo SDK: %SDK%
 
-          echo [3/4] Recompiling default.xbe into generated\game
-          "%TOOLS%\xbe_recomp.exe" config\game.toml --xdk "%SDK%\xdk" >nul || exit /b 1
+          rem ============================================================
+          echo [3/5] Recompiling default.xbe into generated\game
+          rem ============================================================
+          findstr /b /l /c:"[symbols]" config\game.toml >nul 2>nul
+          if errorlevel 1 (
+              echo Extracting symbols from assets\default.xbe...
+              "%TOOLS%\xbe_symbols.exe" assets\default.xbe "%SDK%\xdk" --out config\game.toml
+              if errorlevel 1 (
+                  echo ERROR: xbe_symbols failed
+                  exit /b 1
+              )
+          )
 
-          echo [4/4] APK - arm64, 30 to 90 minutes for the first build
+          "%TOOLS%\xbe_recomp.exe" config\game.toml --xdk "%SDK%\xdk" >nul
+          if errorlevel 1 (
+              echo ERROR: xbe_recomp failed
+              exit /b 1
+          )
+
+          rem ============================================================
+          echo [4/5] Android project
+          rem ============================================================
           if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
-          call gradlew.bat assembleRelease %GRADLE_ARGS% || exit /b 1
+
+          rem ============================================================
+          echo [5/5] APK - arm64, 30 to 90 minutes for the first build
+          rem ============================================================
+          call gradlew.bat assembleRelease %GRADLE_ARGS%
+          if errorlevel 1 (
+              echo ERROR: Gradle assembleRelease failed
+              exit /b 1
+          )
+
+          echo.
+          echo Build complete.
 
       - name: Name the APK
         shell: bash
         run: mv app/build/outputs/apk/release/app-release.apk "Black-${{ steps.version.outputs.artifact }}.apk"
 
-      # ==== NEW: Sign & verify with apksigner (re-signs over whatever Gradle produced) ====
+      # ==== Sign & verify with apksigner (re-signs over whatever Gradle produced) ====
       - name: Sign & verify release APK
         shell: cmd
         run: |
@@ -338,7 +407,6 @@ jobs:
           echo Verifying signature...
           call "!BUILD_TOOLS!\apksigner.bat" verify --verbose "!APK!"
           if errorlevel 1 exit /b 1
-      # ==== /NEW ====
 
       - uses: actions/upload-artifact@v5
         with:
@@ -378,7 +446,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release notes
-        if: steps.version.outputs.release == 'true'
         shell: bash
         run: |
           apk="Black-${{ steps.version.outputs.artifact }}.apk"
@@ -388,7 +455,6 @@ jobs:
               -e "s|{{SIZE}}|$size|g" -e "s|{{SHA256}}|$sha|g" ci/release-notes.md > "$RUNNER_TEMP/release-notes.md"
 
       - name: Release
-        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: Black for Android ${{ github.ref_name }}
