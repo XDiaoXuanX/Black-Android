@@ -11,10 +11,13 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <jni.h>
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_system.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+
 
 #include "app/app.h"
 #include "audio/output.h"
@@ -250,7 +253,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold };
+             kDynamicMax, kDynamicHold, kAutoUpdate };
 
 using rows::Kind;
 using rows::Row;
@@ -314,7 +317,9 @@ constexpr Row kGeneralRows[] = {
     {Kind::Value, kAudioOutput, "AUDIO OUTPUT"},
     {Kind::Heading, -1, "UPDATES"},
     {Kind::Value, kCheckUpdates, "CHECK FOR UPDATES"},
+    {Kind::Value, kAutoUpdate, "STARTUP UPDATE CHECK"},
 };
+
 
 // a page of its own, apart from the recomp's settings
 constexpr Row kCheatRows[] = {
@@ -641,6 +646,38 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), format, kLanguageNames[i]);
             break;
         }
+           case kAutoUpdate: {
+    // Mendapatkan lingkungan JNI dari SDL / Native Activity
+    JNIEnv* env = (JNIEnv*)SDL_GetAndroidJNIEnv();
+    jobject activity = (jobject)SDL_GetAndroidActivity();
+    if (env && activity) {
+        jclass clazz = env->GetObjectClass(activity);
+        
+        // Membaca status saat ini dari SharedPreferences via Java method
+        jmethodID getMethod = env->GetStaticMethodID(clazz, "isStartupCheckEnabled", "(Landroid/content/Context;)Z");
+        bool auto_check = true;
+        if (getMethod) {
+            auto_check = env->CallStaticBooleanMethod(clazz, getMethod, activity);
+        }
+
+        // Jika tombol ditekan (step != 0), ubah statusnya (toggle)
+        if (step) {
+            auto_check = !auto_check;
+            jmethodID setMethod = env->GetStaticMethodID(clazz, "setStartupCheckEnabled", "(Landroid/content/Context;Z)V");
+            if (setMethod) {
+                env->CallStaticVoidMethod(clazz, setMethod, activity, (jboolean)auto_check);
+            }
+        }
+        
+        env->DeleteLocalRef(clazz);
+        env->DeleteLocalRef(activity);
+        
+        std::snprintf(text, sizeof(text), "%s", OnOff(auto_check));
+    } else {
+        std::snprintf(text, sizeof(text), "OFF");
+    }
+    break;
+      }
     }
 }
 
