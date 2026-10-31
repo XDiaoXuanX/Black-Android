@@ -302,6 +302,10 @@ at = 0x1BB2D6
 call = "FieldOfView"
 
 [[hook]]
+at = 0x2034D6
+call = "LodTangent"
+
+[[hook]]
 at = 0x16B312
 call = "FlashSprite"
 
@@ -379,12 +383,29 @@ at = 0xE056D
 call = "RagdollLookAhead"
 
 [[hook]]
+at = 0x792B4
+call = "JointUpperRoom"
+
+[[hook]]
+at = 0x792C8
+call = "JointLowerRoom"
+
+[[hook]]
+at = 0x79304
+call = "JointLockedError"
+
+[[hook]]
 at = 0x78B0F
 call = "JointAnchorGap"
 
 [[hook]]
 at = 0x79327
 call = "JointTurnBack"
+
+[[hook]]
+at = 0x14B4F5
+call = "SoundCountdownTick"
+on_false = 0x14B559
 
 [[hook]]
 at = 0x169160
@@ -486,6 +507,10 @@ at = 0x1CA65F
 call = "PropLimit"
 
 [[hook]]
+at = 0x16DF4D
+call = "ParticleView"
+
+[[hook]]
 at = 0x16DFFB
 call = "ParticleFade"
 
@@ -570,3 +595,8 @@ after = true
 at = 0x1F813B
 call = "GameLanguage"
 after = true
+
+# src/game/hooks.cpp, the 0.8 step of the move speed
+[[hook]]
+at = 0x1CC672
+call = "MoveEase"

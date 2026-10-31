@@ -1,0 +1,404 @@
+# Builds the full APK with the native renderer and the recompiled game.
+#
+# Runs:
+#  - v* tag: builds and publishes a release, as before.
+#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input; the APK is attached
+#    to the run as an artifact and nothing is published. This is the "preview build from a branch" path for the real
+#    app. It still needs the secrets below: the recompiler cannot run without the decrypted default.xbe.
+#  - pull request: not run here. It needs a 10-90 minute Windows job and the game key; use the UI Preview workflow to
+#    test the interface from a branch without it.
+#
+# Secrets: XBE_KEY (the passphrase of ci/default.xbe.enc), KEYSTORE_BASE64 (the release .jks in base64),
+# KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without the keystore the APK has a debug signature.
+name: Build Black Android CI ( Plus+ )
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to build (empty: the branch this run was started from)"
+        type: string
+        default: ""
+      version:
+        description: "Version name (empty: the v* tag, or preview-<run> for a manual build)"
+        type: string
+        default: ""
+      applicationId:
+        description: "Custom applicationId, e.g. com.racas.black (empty: keep the one in build.gradle)"
+        required: false
+        default: "com.racas.black"
+        type: choice
+        options:
+          - com.racas.black
+          - com.racas.black.custom
+          - com.antutu.ABenchMark
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 300
+    env:
+      NDK_VERSION: 28.2.13676358
+      CMAKE_VERSION: 3.31.6
+
+    steps:
+      - name: Check out the chosen ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0  # the tags and commits, for the list of changes since the previous release
+          persist-credentials: false
+
+      - name: Customize applicationId
+        if: ${{ github.event.inputs.applicationId != '' }}
+        shell: bash
+        env:
+          APP_ID: ${{ github.event.inputs.applicationId }}
+        run: |
+          set -euo pipefail
+
+          # Format check: at least two segments, each starting with a letter
+          if ! [[ "$APP_ID" =~ ^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$ ]]; then
+            echo "::error::Invalid applicationId '$APP_ID'. Example: com.example.racasblack"
+            exit 1
+          fi
+
+          gradle_file=""
+          for f in app/build.gradle.kts app/build.gradle; do
+            if [ -f "$f" ]; then gradle_file="$f"; break; fi
+          done
+          if [ -z "$gradle_file" ]; then
+            echo "::error::app/build.gradle or app/build.gradle.kts not found"
+            exit 1
+          fi
+
+          # Handle both syntaxes: Kotlin (= "x") and Groovy ("x")
+          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+
+          if ! grep -q "applicationId.*[\"']$APP_ID[\"']" "$gradle_file"; then
+            echo "::error::Failed to patch applicationId in $gradle_file"
+            grep -n "applicationId" "$gradle_file" || true
+            exit 1
+          fi
+          echo "applicationId -> $APP_ID"
+          grep -n "applicationId" "$gradle_file"
+
+      # ==== NEW: force minSdk to Android 9 (API 28) ====
+      # Changes minSdk 29 -> 28 directly in the Gradle file before the build.
+      # Supports Kotlin syntax (minSdk = 29) and Groovy syntax (minSdkVersion 29 / minSdk 29).
+      - name: Set minSdk to Android 9 (API 28)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle_file=""
+          for f in app/build.gradle.kts app/build.gradle; do
+            if [ -f "$f" ]; then gradle_file="$f"; break; fi
+          done
+          if [ -z "$gradle_file" ]; then
+            echo "::error::app/build.gradle or app/build.gradle.kts not found"
+            exit 1
+          fi
+
+          echo "Patch file: $gradle_file"
+          echo "Before:"
+          grep -n "minSdk" "$gradle_file" || true
+
+          # Kotlin DSL:     minSdk = 29
+          sed -i -E "s|minSdk([[:space:]]*=[[:space:]]*)29|minSdk\128|g" "$gradle_file"
+          # Groovy DSL:     minSdkVersion 29
+          sed -i -E "s|minSdkVersion([[:space:]]+)29|minSdkVersion\128|g" "$gradle_file"
+          # Groovy DSL alt: minSdk 29
+          sed -i -E "s|minSdk([[:space:]]+)29|minSdk\128|g" "$gradle_file"
+
+          # Verify
+          if grep -qE "minSdk(Version)?[[:space:]]*=?[[:space:]]*28" "$gradle_file"; then
+            echo "minSdk -> 28 (Android 9.0) OK"
+          else
+            echo "::error::Failed to set minSdk=28 in $gradle_file"
+            grep -n "minSdk" "$gradle_file" || true
+            exit 1
+          fi
+
+          echo "After:"
+          grep -n "minSdk" "$gradle_file"
+      # ==== /NEW ====
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Android SDK packages
+        shell: cmd
+        run: call "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" --install "platforms;android-34" "ndk;%NDK_VERSION%" "cmake;%CMAKE_VERSION%" >nul
+
+      - name: Decrypt default.xbe
+        shell: bash
+        env:
+          XBE_KEY: ${{ secrets.XBE_KEY }}
+        run: |
+          if [ -z "$XBE_KEY" ]; then
+            echo "::error::The XBE_KEY secret is missing. The full build needs XBE_KEY and the four KEYSTORE_* secrets; add them in Settings -> Secrets and variables -> Actions. The UI Preview workflow needs no game key."
+            exit 1
+          fi
+          mkdir -p assets
+          # through a file: Git Bash rewrites an environment value that looks like a path (the key may start with /)
+          # before a Windows program such as openssl sees it
+          key="$RUNNER_TEMP/xbe.key"
+          printf '%s' "$XBE_KEY" > "$key"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in ci/default.xbe.enc -out assets/default.xbe -pass "file:$key"
+          rm -f "$key"
+          sha1sum assets/default.xbe
+
+      # ==== CHANGED: Release key (setup keystore, exports BLACK_* env vars for Gradle) ====
+      - name: Release key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -e
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          KS_PASSWORD="$KEYSTORE_PASSWORD"
+          KPASSWORD="$KEY_PASSWORD"
+          ALIAS="${KEY_ALIAS:-black-ci}"
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            # Release keystore from secrets (tagged releases / production builds)
+            echo "Using release keystore from secrets..."
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          else
+            # Tagged release without a keystore must fail hard, because users on the previous signed APK will not be able to update
+            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              echo "::error::Tagged releases require the release keystore: set KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or users on the previous signed APK cannot install this one."
+              exit 1
+            fi
+            echo "WARNING: No release keystore secret set - generating a temporary CI keystore." >&2
+            [ -z "$KS_PASSWORD" ] && KS_PASSWORD="black-ci-temp"
+            [ -z "$KPASSWORD" ]   && KPASSWORD="black-ci-temp"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype PKCS12 \
+              -alias "$ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KS_PASSWORD" \
+              -keypass "$KPASSWORD" \
+              -dname "CN=BLACK CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              2>/dev/null
+          fi
+
+          # Export env for Gradle's signingConfig and the later signing step
+          {
+            echo "BLACK_KEYSTORE=$KEYSTORE_PATH"
+            echo "BLACK_KEYSTORE_PASSWORD=$KS_PASSWORD"
+            echo "BLACK_KEY_ALIAS=$ALIAS"
+            echo "BLACK_KEY_PASSWORD=$KPASSWORD"
+          } >> "$GITHUB_ENV"
+      # ==== /CHANGED ====
+
+      - name: Version
+        id: version
+        shell: bash
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_APP_ID: ${{ github.event.inputs.applicationId }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
+            name="${GITHUB_REF_NAME#v}"
+            source="tag $GITHUB_REF_NAME"
+            release=true
+          else
+            name="${INPUT_VERSION:-preview-${GITHUB_RUN_NUMBER}}"
+            source="${INPUT_REF:-$GITHUB_REF_NAME}"
+            release=false
+          fi
+          # the version goes into the APK and artifact names: keep it to characters those accept
+          name=$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
+          [ -z "$name" ] && name="preview-${GITHUB_RUN_NUMBER}"
+
+          # Only preview builds with a custom applicationId get a suffix
+          artifact="$name"
+          if [ "$release" != "true" ] && [ -n "$INPUT_APP_ID" ]; then
+            suffix=$(printf '%s' "$INPUT_APP_ID" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-._]+//; s/[-._]+$//')
+            [ -n "$suffix" ] && artifact="${name}-${suffix}"
+          fi
+
+          echo "name=$name"         >> "$GITHUB_OUTPUT"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          echo "source=$source"     >> "$GITHUB_OUTPUT"
+          echo "release=$release"   >> "$GITHUB_OUTPUT"
+          echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: cmd
+        run: |
+          setlocal
+
+          rem Fallback if ANDROID_HOME is not set by the runner
+          if not defined ANDROID_HOME set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+
+          set "TOOLS=%CD%\out\build\android-tools"
+          set "NDK=%ANDROID_HOME%\ndk\%NDK_VERSION%"
+          set "SDKCMAKE=%ANDROID_HOME%\cmake\%CMAKE_VERSION%\bin"
+
+          echo [1/4] Visual Studio environment
+          set "PF86=%ProgramFiles(x86)%"
+          set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
+          for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
+          if not defined VSDIR (
+              echo Visual Studio with "Desktop development with C++" was not found.
+              exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul
+          set "PATH=%SDKCMAKE%;%PATH%"
+
+          rem Clang from VS if present, otherwise the one from the NDK
+          set "CLANGCL=%VSDIR%\VC\Tools\Llvm\x64\bin\clang-cl.exe"
+          if not exist "%CLANGCL%" set "CLANGCL=%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe"
+
+          echo [2/4] Recompiler
+          cmake -S tools -B "%TOOLS%" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=%CLANGCL%" "-DCMAKE_CXX_COMPILER=%CLANGCL%" >nul || exit /b 1
+          cmake --build "%TOOLS%" >nul || exit /b 1
+          set /p SDK=<"%TOOLS%\sdk_dir.txt"
+          set "SDK=%SDK:/=\%"
+          findstr /b /l /c:"[symbols]" config\game.toml >nul 2>nul || "%TOOLS%\xbe_symbols.exe" assets\default.xbe "%SDK%\xdk" --out config\game.toml || exit /b 1
+
+          echo [3/4] Recompiling default.xbe into generated\game
+          "%TOOLS%\xbe_recomp.exe" config\game.toml --xdk "%SDK%\xdk" >nul || exit /b 1
+
+          echo [4/4] APK - arm64, 30 to 90 minutes for the first build
+          if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
+          call gradlew.bat assembleRelease %GRADLE_ARGS% || exit /b 1
+
+      - name: Name the APK
+        shell: bash
+        run: mv app/build/outputs/apk/release/app-release.apk "Black-${{ steps.version.outputs.artifact }}.apk"
+
+      # ==== NEW: Sign & verify with apksigner (re-signs over whatever Gradle produced) ====
+      - name: Sign & verify release APK
+        shell: cmd
+        run: |
+          setlocal enabledelayedexpansion
+          if not defined ANDROID_HOME set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+
+          if not defined BLACK_KEYSTORE (
+            echo ::error::BLACK_KEYSTORE is not set - the "Release key" step should have exported it.
+            exit /b 1
+          )
+          if not exist "%BLACK_KEYSTORE%" (
+            echo ::error::Keystore not found at %BLACK_KEYSTORE%
+            exit /b 1
+          )
+
+          rem Pick the newest build-tools directory (name-sorted descending)
+          set "BUILD_TOOLS="
+          for /f "delims=" %%d in ('dir /b /ad /o-n "%ANDROID_HOME%\build-tools" 2^>nul') do (
+            if not defined BUILD_TOOLS set "BUILD_TOOLS=%ANDROID_HOME%\build-tools\%%d"
+          )
+          if not defined BUILD_TOOLS (
+            echo ::error::No build-tools found under %ANDROID_HOME%\build-tools
+            exit /b 1
+          )
+
+          set "APK=Black-${{ steps.version.outputs.artifact }}.apk"
+          if not exist "!APK!" (
+            echo ::error::APK not found: !APK!
+            exit /b 1
+          )
+
+          echo Signing APK: !APK!
+          call "!BUILD_TOOLS!\apksigner.bat" sign ^
+            --ks "%BLACK_KEYSTORE%" ^
+            --ks-pass "pass:%BLACK_KEYSTORE_PASSWORD%" ^
+            --key-pass "pass:%BLACK_KEY_PASSWORD%" ^
+            --ks-key-alias "%BLACK_KEY_ALIAS%" ^
+            "!APK!"
+          if errorlevel 1 exit /b 1
+
+          echo Verifying signature...
+          call "!BUILD_TOOLS!\apksigner.bat" verify --verbose "!APK!"
+          if errorlevel 1 exit /b 1
+      # ==== /NEW ====
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: Black-${{ steps.version.outputs.artifact }}
+          path: Black-${{ steps.version.outputs.artifact }}.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Run summary
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+          ARTIFACT: ${{ steps.version.outputs.artifact }}
+          SOURCE: ${{ steps.version.outputs.source }}
+          RELEASE: ${{ steps.version.outputs.release }}
+        run: |
+          APK="Black-$ARTIFACT.apk"
+          sha=$(sha256sum "$APK" | cut -d' ' -f1)
+          size=$(stat -c %s "$APK")
+          commit=$(git rev-parse --short=7 HEAD)
+          {
+            echo "## Black for Android \`$VERSION\`"
+            echo
+            echo "- Source: $SOURCE at \`$commit\`"
+            echo "- APK: \`$APK\` ($size bytes)"
+            echo "- SHA-256: \`$sha\`"
+            echo
+            echo "**Download:** open the **Artifacts** section at the bottom of this run page."
+            echo
+            echo '```'
+            echo "adb install -r $APK"
+            echo '```'
+            if [ "$RELEASE" != "true" ]; then
+              echo
+              echo "Manual build: nothing was published. Merge the branch and push a \`v*\` tag to make a release."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release notes
+        if: steps.version.outputs.release == 'true'
+        shell: bash
+        run: |
+          apk="Black-${{ steps.version.outputs.artifact }}.apk"
+          size=$(awk -v b="$(stat -c %s "$apk")" 'BEGIN { printf "%.1f MB", b / 1048576 }')
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          sed -e "s|{{VERSION}}|$GITHUB_REF_NAME|g" -e "s|{{TAG}}|$GITHUB_REF_NAME|g" -e "s|{{APK}}|$apk|g" \
+              -e "s|{{SIZE}}|$size|g" -e "s|{{SHA256}}|$sha|g" ci/release-notes.md > "$RUNNER_TEMP/release-notes.md"
+          # the commits since the previous tag, which the app's update dialog shows too
+          prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          {
+            echo
+            echo "## What's Changed"
+            echo
+            git log --no-merges --pretty='* %s' ${prev:+"$prev.."}"$GITHUB_REF_NAME"
+          } >> "$RUNNER_TEMP/release-notes.md"
+
+      - name: Release
+        if: steps.version.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Black for Android ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          files: Black-${{ steps.version.outputs.artifact }}.apk
+          generate_release_notes: true
+          make_latest: true

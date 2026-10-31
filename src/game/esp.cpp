@@ -1,6 +1,6 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
 // drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims in the view
-// turns to the body of the living enemy nearest the crosshair
+// turns to the neck just under the head of the living enemy nearest the crosshair
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -31,12 +31,18 @@ constexpr uint32_t kPlayerZoom = 0x2A4;
 constexpr float kHeight = 1.8f;      // world units are metres: the near plane is 0.08
 constexpr float kBoxWidth = 0.45f;   // of the box's height
 constexpr float kNear = 0.08f;       // clip w nearer than this is behind the camera
-constexpr float kThickness = 0.8f;   // lines of a 480 frame
-constexpr float kChest = 1.2f;       // above the feet, where the aimbot aims: the body, a bigger hit than the head
+constexpr float kThickness = 1.5f;   // lines of a 480 frame
+
+// aimbot target height: the neck just under the chin. Between the neck hitbox (≈1.50) and the jaw (≈1.60):
+// lethal like the head but forgiving to the bob of a walking or crouching enemy that would make a 1.65 point
+// float above the skull
+constexpr float kNeckHead = 1.55f;   // above the feet, where the aimbot aims
+
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 constexpr float kPull = 1.0f;        // of the turn to the target, a frame
 constexpr float kDegrees = 180.0f / 3.14159265f;
-constexpr float kColour[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // rgba
+// soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
+constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
 
 // an enemy is drawn while its update ran this recently: none once the game pauses, no flicker between ticks
 constexpr auto kSeen = std::chrono::milliseconds(250);
@@ -126,7 +132,9 @@ void EspCamera() {
 }
 
 // esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw; while the
-// player aims in. The turn is read off the projection, the angles of the target from the middle of the view
+// player aims in. The turn is read off the projection, the angles of the target from the middle of the view.
+// The target is the neck just under the chin (kNeckHead), so the crosshair lands on the same lethal line the
+// game's own head shot registers on, without floating above a crouching enemy
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
@@ -139,8 +147,8 @@ void Aimbot(X86Context& ctx) {
         uint32_t who = g_seen[i].who;
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         const float* at = &G<float>(who + kCharPosition);
-        float chest[3] = {at[0], at[1] + kChest, at[2]}, clip[4];
-        if (!Clip(chest, clip)) continue;
+        float head[3] = {at[0], at[1] + kNeckHead, at[2]}, clip[4];
+        if (!Clip(head, clip)) continue;
         float y = -std::atan(clip[0] / clip[3] / g_projection[0]) * kDegrees;
         float p = -std::atan(clip[1] / clip[3] / g_projection[5]) * kDegrees;
         float off = std::sqrt(y * y + p * p);

@@ -190,6 +190,8 @@ static float Widen(uint32_t degrees) {
 }
 
 static float g_gun = 1.0f;  // the gun's picture over the view's
+static float g_view_fov = 0;  // the degrees FieldOfView left
+static float g_game_fov = 0;  // the game's own in their place
 
 // The view of play, 70 over the zoom: the setting from the hip, the game's own once the aim is in.
 // ecx the weapon, xmm0 its zoom. Scripted cameras write theirs after this
@@ -201,7 +203,25 @@ void FieldOfView(X86Context& ctx, uint8_t*) {
     float view = 1 + (Widen(game::Opt().fov) - 1) * hip;
     g_gun = view / (1 + (Widen(game::Opt().viewmodel_fov) - 1) * hip);
     float& fov = ctx.xmm[1].f[0];
+    g_game_fov = fov;
     if (view != 1) fov = std::atan(std::tan(fov * kHalf) * view) / kHalf;
+    g_view_fov = fov;
+}
+
+// camera
+constexpr uint32_t kCameraFov = 0x750;
+constexpr uint32_t kCameraTangent = 0x16A0;  // of the half angle
+
+// the game's own tangent over the view's, for a view with FieldOfView's degrees
+static float GameViewShare(float fov) {
+    if (fov != g_view_fov) return 1;
+    return std::tan(g_game_fov * kHalf) / std::tan(g_view_fov * kHalf);
+}
+
+// LOD, draw distance and particle count compares scale with the camera's tangent (ebx camera): they keep the
+// game's own view, a wider one drops models and effects in front of the player
+void LodTangent(X86Context& ctx, uint8_t*) {
+    G<float>(ctx.ebx + kCameraTangent) *= GameViewShare(G<float>(ctx.ebx + kCameraFov));
 }
 
 // The list of the first person models, gun, arms and muzzle mesh: drawn at the viewmodel setting
@@ -302,6 +322,9 @@ void SwayEnd(X86Context&, uint8_t*) {
     g_sway = 0;
 }
 
+// The player's move speed eases to the stick's by at most a fixed step a frame: the step of a frame at 30
+void MoveEase(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
+
 static float Dt() { return G<float>(R32(kWorld) + kTimerDt); }
 
 // A wait set and tested once a frame lasts whole frames of the game's frame time: as many at any frame rate.
@@ -368,7 +391,7 @@ X86_FUNC(sub_001EEFD0) {
     RestoreAmmo(weapon, kept);
     uint32_t me = R32(weapon + kWeaponOwner);
     // the rapid fire cheat: a shot's wait, its fire mode's +0x20, is that many times shorter
-    uint32_t faster = std::clamp(game::Opt().rapid_fire, 1u, 4u);
+    uint32_t faster = std::clamp(game::Opt().rapid_fire, 1u, 8u);
     if (shot && me == Player() && wait > 0) wait /= float(faster);
     if (me == Player()) {
         if (R32(weapon + kWeaponState) != 1 || wait != rest) g_idle_early = false;
@@ -507,6 +530,17 @@ void RagdollLookAhead(X86Context& ctx, uint8_t*) {
     if (float share = FrameShare(); share > 0) ctx.xmm[0].f[0] /= share;
 }
 
+// A joint past its limit is pushed back within one step and keeps that push as speed: back within a frame of
+// the game's frame rate instead. xmm6 the room to the upper or lower limit, xmm0 a locked axis' error
+void JointUpperRoom(X86Context& ctx, uint8_t*) {
+    if (ctx.xmm[6].f[0] < 0) ctx.xmm[6].f[0] *= FrameShare();
+}
+void JointLowerRoom(X86Context& ctx, uint8_t*) {
+    if (ctx.xmm[6].f[0] > 0) ctx.xmm[6].f[0] *= FrameShare();
+}
+void JointLockedError(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= FrameShare(); 
+}
+
 // A joint's error, its anchors apart or a turn past its limit or lock, is put right within one step and that push
 // stays on as speed: put right within a frame of the game's frame rate instead.
 // xmm1 the gap of the anchors after the step, xmm2 the part of it the bodies' own motion makes
@@ -547,6 +581,16 @@ X86_FUNC(sub_001690D0) {
 }
 bool ShardTick(X86Context&, uint8_t*) { return g_shard_tick; }
 
+// The sound manager counts its glass shard sound slots (0x2AB27C) and four timers down once a call, made for 30 calls
+// a second: they count once a game frame, or shard sounds pile up at high frame rates
+bool SoundCountdownTick(X86Context&, uint8_t*) {
+    static float ticks;
+    ticks += FrameShare();
+    if (ticks < 1) return false;
+    ticks -= 1;
+    return true;
+}
+
 // xmm1 the gain of a shard's turn a frame
 void ShardSpinGain(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
 
@@ -563,7 +607,7 @@ void ShardStep(X86Context& ctx, uint8_t*) {
 
 // LOD and draw distances reach this many times farther: each compare sees a distance that much shorter or a
 // limit that much longer. Characters, props, pickups, ground cover, particles and bullet holes
-static float Reach() { return float(std::clamp(game::Opt().draw_distance, 1u, 8u)); }
+static float Reach() { return float(std::clamp(game::Opt().draw_distance, 1u, 16u)); }
 void DistanceShorter(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach(); }
 void DistanceShorterSquared(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach() * Reach(); }
 void LimitLonger(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= Reach(); }
@@ -578,6 +622,12 @@ void ParticleFade(X86Context& ctx, uint8_t*) {
     float cut = std::min(G<float>(ctx.edi + kParticleFarCut) * ctx.xmm[1].f[0], G<float>(ctx.edx + kCameraFarCut));
     if (Reach() > 1 && cut > 0) ctx.xmm[3].f[0] *= ctx.xmm[2].f[0] / cut;
 }
+
+constexpr uint32_t kViewportFov = 0x6C;  // a copy of the camera's
+
+// eax the viewport, xmm1 one over its view window width: particle fades scale with it. A wide view ends the
+// fade in before the 0.08 near plane and smoke, fire and trails go
+void ParticleView(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] /= GameViewShare(G<float>(ctx.eax + kViewportFov)); }
 
 // ground cover and its patches
 constexpr uint32_t kCoverPatches = 0x28;
