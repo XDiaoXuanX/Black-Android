@@ -31,6 +31,8 @@ on:
         options:
           - com.black.unofficial
           - com.black.unofficial.custom
+          - com.racas.black
+          - com.racas.black.custom
           - com.antutu.ABenchMark
   push:
     tags: ["v*"]
