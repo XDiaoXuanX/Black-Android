@@ -1,60 +1,86 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/RanggaCasper/Black-Android/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="Black">
-</p>
-
-<h1 align="center">Black for Android {{VERSION}}</h1>
-
-<p align="center">
-  An unofficial native Android port of the original Xbox version of <b>Black</b>,<br>
-  statically recompiled with <a href="https://github.com/TGP482/XboxXBE-Recomp">XboxXBE-Recomp</a> and drawn with Vulkan.
+  <img src="https://raw.githubusercontent.com/UnknuwProjects/Black-Android/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="Black Android Logo">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white" alt="Android 10+">
-  <img src="https://img.shields.io/badge/arch-arm64--v8a-blue" alt="arm64-v8a">
-  <img src="https://img.shields.io/badge/Vulkan-1.1-AC162C?logo=vulkan&logoColor=white" alt="Vulkan 1.1">
-  <img src="https://img.shields.io/badge/SDL-3-1D4F91" alt="SDL3">
+  <code><b>[ B L A C K : A N D R O I D ]</b></code><br>
+  <code>REL-{{VERSION}} // STABLE BUILD</code>
 </p>
+
+<p align="center">
+  An unofficial native Android port of the classic Xbox title <b>Black</b>,<br>
+  recompiled via <a href="https://github.com/TGP482/XboxXBE-Recomp">XboxXBE-Recomp</a> and rendered with Vulkan.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Android-10%2B-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android 10+">
+  <img src="https://img.shields.io/badge/Architecture-arm64--v8a-blue?style=flat-square" alt="arm64-v8a">
+  <img src="https://img.shields.io/badge/Graphics-Vulkan_1.1-AC162C?style=flat-square&logo=vulkan&logoColor=white" alt="Vulkan 1.1">
+  <img src="https://img.shields.io/badge/Core-SDL_3-1D4F91?style=flat-square" alt="SDL3">
+</p>
+
+---
 
 > [!IMPORTANT]
-> This release contains **no game assets**. You need the files from your own legally acquired copy of *Black* (USA or Europe release).
+> **No Game Assets Included**  
+> This release contains **no copyrighted game assets**. You must provide your own legally obtained copy of *Black* (Xbox Original USA or Europe release).
+
+---
+
+### ⚡ What's New in {{VERSION}}
+* **Expanded Silenced Weapon Variants:** Added dedicated cheat options for suppressed weapon variants in the weapon swap menu—including **Pistol (Silenced)**, **Glock (Silenced)**, **MP5 (Suppressed)**, and **Walther 2000 (Silenced)**—allowing seamless switching to stealth variants with fully functional first-person banks and world models.
+* **Refined Update Center & Startup Control:** Relocated update options into the general settings category with a new persistent **Startup Update Check** (On/Off) toggle managed via SharedPreferences and JNI, alongside manual update triggers.
+* **Refined White ESP:** Updated ESP features with clean **white color** and **thinner line widths** for sharp visual clarity without cluttering the game screen.
+* **Forced Public SaveData:** Save files, configuration settings, and logs are now redirected directly to `/storage/emulated/0/Black/SaveData/` complete with real-time **toast notifications** confirming storage operations.
+
+---
 
 ## 📦 Download
 
 | File | Size | SHA-256 |
-| --- | --- | --- |
-| [`{{APK}}`](https://github.com/RanggaCasper/Black-Android/releases/download/{{TAG}}/{{APK}}) | {{SIZE}} | `{{SHA256}}` |
+| :--- | :--- | :--- |
+| [`{{APK}}`](https://github.com/UnknuwProjects/Black-Android/releases/download/{{TAG}}/{{APK}}) | {{SIZE}} | `{{SHA256}}` |
 
-## 🚀 Installation
+---
 
-1. Install **`{{APK}}`** on your phone.
-2. Open **Black Android** and allow **all files access** when it asks.
-3. Copy the game into **`/storage/emulated/0/Black`**, or into a `Black` folder on your SD card: the disc image (`.iso`), or `default.xbe` with its data folders.
-4. The game starts as soon as it finds the files.
+## 🚀 Installation & Setup
+
+1. Install **`{{APK}}`** on your device.
+2. Launch the app and grant **All Files Access** when prompted.
+3. Place your game files (either disc image `.iso` or `default.xbe` with its data folders) inside:
+   * `/storage/emulated/0/Black/` **OR**
+   * A `Black` folder located at the root of your SD Card.
+4. The game will automatically detect and boot the files.
 
 > [!TIP]
-> If you don't grant all files access, put the game in `Android/data/com.racas.black/files/assets` instead. Settings, saves, logs and the shader cache are stored in `Android/data/com.racas.black/files`.
+> **Fallback Path:** If broad storage permissions are bypassed, data will gracefully fallback to `Android/data/com.black.unofficial/files/assets/`.
 
-## ✨ Features
+---
 
-| | |
-| --- | --- |
-| 🖥️ **Graphics** | Render resolution 20–200%, FOV 45–140°, viewmodel FOV, FMV scale, unlocked frame rate, V-Sync, FPS counter, anisotropic filtering, 2x / 4x / 8x draw distance, toggleable reload blur |
-| 👆 **Touch Controls** | Presets and a layout editor to move and resize each control, touch sensitivity, gyroscope aiming with the phone or a DualShock 4 / DualSense |
-| 🎮 **Other Input** | SDL3 controllers with rumble, keyboard and a captured mouse with rebindable controls |
-| ⚙️ **General** | Language (with Indonesian), skip intros, audio output, update check, pause while in the background |
-| 💀 **Cheats** | Infinite ammo and grenades, rapid fire, no recoil, god mode, one-hit kills, game speed |
+## ✨ Features (Base v1.7.0)
 
-The settings are in the game's own options menu, one page per group. Android's back button opens the pause menu.
+| Category | Specifications & Options |
+| :--- | :--- |
+| 🖥️ **Graphics** | Render resolution 20–200%, FOV 45–140°, viewmodel FOV, FMV scale, unlocked framerate, V-Sync, FPS counter, anisotropic filtering, draw distance scaling, toggleable reload blur |
+| 👆 **Touch Controls** | Fully customizable layout editor, touch sensitivity adjustment, and gyroscope aiming (device sensors, DualShock 4, or DualSense) |
+| 🎮 **Input Support** | Native SDL3 controller integration with rumble feedback, physical keyboard, and captured mouse mapping |
+| ⚙️ **General** | Multi-language support (including Indonesian), intro skipping, audio output routing, general settings update hub, startup update check control, and background auto-pause |
+| 💀 **Cheats** | Infinite ammo/grenades, rapid fire, zero recoil, god mode, one-hit kills, game speed multipliers, and native silenced weapon variants (Pistol, Glock, MP5, Walther 2000) |
 
-## 📱 Requirements
+*Note: In-game settings are handled via the game's native options menu. Use Android's back button to trigger the pause menu.*
 
-- **Android** 10 or newer, arm64
-- **GPU** with a Vulkan 1.1 driver (Adreno 6xx+, Mali-G7x+, Xclipse)
-- **4 GB** RAM, **2 GB** free storage
+---
 
-## 🙏 Credits
+## 📱 System Requirements
 
-Built on [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by **TGP482**, with [SDL](https://github.com/libsdl-org/SDL), [glslang](https://github.com/KhronosGroup/glslang), [toml++](https://github.com/marzer/tomlplusplus) and [Dear ImGui](https://github.com/ocornut/imgui).
+- **Operating System:** Android 10 or newer (64-bit arm64-v8a)
+- **Graphics GPU:** Vulkan 1.1 compatible (Adreno 6xx+, Mali-G7x+, Xclipse)
+- **Memory & Storage:** 4 GB RAM minimum \| 2 GB free internal storage space
+
+---
+
+## 🙏 Credits & Acknowledgments
+
+Port maintained by **UnknuwProjects**, based on the original Android adaptation by [RanggaCasper](https://github.com/RanggaCasper/Black-Android). Built on [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by **TGP482**, with [SDL](https://github.com/libsdl-org/SDL), [glslang](https://github.com/KhronosGroup/glslang), [toml++](https://github.com/marzer/tomlplusplus), and [Dear ImGui](https://github.com/ocornut/imgui).
 
 ---
