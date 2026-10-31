@@ -457,7 +457,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Black for Android ${{ github.ref_name }}
+          tag_name: Black for Android ${{ github.ref_name }}
           body_path: ${{ runner.temp }}/release-notes.md
           files: Black-${{ steps.version.outputs.artifact }}.apk
           generate_release_notes: false
