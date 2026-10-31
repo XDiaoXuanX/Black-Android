@@ -73,8 +73,10 @@ constexpr bool kTrack = true;   // true: what each pickup (suppressor, medkit...
 constexpr uint32_t kPickupManager = 0x2D0D64;  // the pickup manager (or a pointer to it)
 constexpr uint32_t kPickupTable = 0x5844;      // its pickups, 0x160 bytes each: +0x140 kind, +0x148 type, +0x154 collected
 constexpr uint32_t kPickupSize = 0x160;
-constexpr uint32_t kStaticAt = 0x2D0800;   // game globals around the managers (track: ownership flags may live here)
-constexpr uint32_t kStaticBytes = 0x1000;
+constexpr uint32_t kStaticAt = 0x2C0000;   // game globals around the managers (track: ownership flags may live here)
+constexpr uint32_t kStaticBytes = 0x20000;
+constexpr uint32_t kFollowAt = 0x2D0000;   // only the pointers in this part are followed to their heap objects
+constexpr uint32_t kFollowBytes = 0x2000;
 constexpr int kPickupMax = 96;
 constexpr int kAmmoTypes = 10;
 constexpr uint32_t kPlayerMedkits = 0x8E1;  // byte in the player: the medkits held (found by the pickup tracker), the game holds 3
@@ -676,7 +678,19 @@ uint32_t PickupManager() {
 // the heap objects the game's globals point to: (object, the global holding the pointer). A suppressor owned may live in
 // one of them, away from everything watched so far
 std::vector<std::pair<uint32_t, uint32_t>> g_static_ptrs;
-constexpr uint32_t kPtrBytes = 0x200;
+constexpr uint32_t kPtrBytes = 0x800;
+constexpr uint32_t kDataBytes = 0x200;
+// per weapon type data blocks (pointed to by the table entries and the weapons): "suppressor owned" may live there
+std::vector<std::pair<uint32_t, std::string>> g_data_ptrs;
+
+bool DataName(uint32_t a, char* s, size_t n) {
+    for (const auto& p : g_data_ptrs)
+        if (a >= p.first && a < p.first + kDataBytes) {
+            std::snprintf(s, n, "%s%08X+0x%X", p.second.c_str(), unsigned(p.first), unsigned(a - p.first));
+            return true;
+        }
+    return false;
+}
 
 bool StaticPtrName(uint32_t a, char* s, size_t n) {
     for (const auto& p : g_static_ptrs)
@@ -701,13 +715,29 @@ void WatchGather(const Level& l, std::vector<uint32_t>& addr) {
     range(PickupManager(), 0x800);
     range(kStaticAt, kStaticBytes);
     g_static_ptrs.clear();
-    for (uint32_t a = kStaticAt; a < kStaticAt + kStaticBytes; a += 4) {
+    for (uint32_t a = kFollowAt; a < kFollowAt + kFollowBytes; a += 4) {
         uint32_t v = R32(a);
-        if (v >= 0x81000000 && v < 0x83F00000 && !(v & 3) && g_static_ptrs.size() < 120) {
+        if (v >= 0x81000000 && v < 0x83F00000 && !(v & 3) && g_static_ptrs.size() < 160) {
             g_static_ptrs.push_back({v, a});
             range(v, kPtrBytes);
         }
     }
+    g_data_ptrs.clear();
+    auto is_ptr = [](uint32_t v) { return v >= 0x81000000 && v < 0x83F00000 && !(v & 3); };
+    auto add_block = [&](uint32_t v, const char* fmt, int a, unsigned b) {
+        if (!is_ptr(v) || g_data_ptrs.size() >= 150) return;
+        char tag[64];
+        std::snprintf(tag, sizeof(tag), fmt, a, b);
+        g_data_ptrs.push_back({v, tag});
+        range(v, kDataBytes);
+    };
+    for (int t = 0; t < l.count; t++)  // +0 the name key (8 bytes), then the type's data
+        for (uint32_t o = 8; o < kEntrySize; o += 4)
+            add_block(R32(l.entries + uint32_t(t) * kEntrySize + o), "table[%d]+0x%X -> ", t, unsigned(o));
+    uint32_t pool_base = R32(l.manager + 4);
+    for (int i = 0; pool_base && i < 8; i++)
+        for (uint32_t o : {0xE8u, 0xECu})
+            add_block(R32(pool_base + uint32_t(i) * 0x110 + o), "weapon[%d]+0x%X -> ", i, unsigned(o));
     std::sort(addr.begin(), addr.end());
     addr.erase(std::unique(addr.begin(), addr.end()), addr.end());
 }
@@ -727,6 +757,7 @@ std::string WatchName(const Level& l, uint32_t a) {
     else if (in(l.player, 0x1000)) std::snprintf(s, sizeof(s), "player+0x%X", a - l.player);
     else if (a >= kStaticAt && a < kStaticAt + kStaticBytes) std::snprintf(s, sizeof(s), "global %08X", a);
     else if (a >= l.world && a < l.world + 0x6000) std::snprintf(s, sizeof(s), "world+0x%X", a - l.world);
+    else if (DataName(a, s, sizeof(s))) {}
     else if (!StaticPtrName(a, s, sizeof(s))) std::snprintf(s, sizeof(s), "word %08X", a);
     return s;
 }
@@ -786,6 +817,94 @@ void WeaponDump(const Level& l) {
                 unsigned(R32(w + o + 24)), unsigned(R32(w + o + 28)));
 }
 
+// ---- temporary: the whole heap around a suppressor pickup ------------------------------------------------------------
+// The watched regions showed no "suppressor owned" word, so it lives elsewhere. While a level plays the heap is copied every
+// two seconds (the words that changed since the last copy are marked as noisy). The pickup message starts the diff against
+// the last copy, which is older than the pickup's own writes: a second later the small words (and new heap pointers) that
+// differ and were quiet before are kept, and another second later only those still holding the new value are logged.
+constexpr bool kHeapDiff = true;
+constexpr uint32_t kHeapLo = 0x81000000, kHeapHi = 0x84000000;
+struct HeapDiff {
+    struct Cand {
+        uint32_t addr, before, after;
+    };
+    std::vector<uint32_t> snap;
+    std::vector<uint64_t> noisy;  // one bit a word: changed between the last two copies
+    std::vector<Cand> cand;
+    double event = -1, last = -100;
+    bool have = false;
+    int stage = 0;  // 0 copying every two seconds, 1 waits a second, 2 candidates, waits another second
+};
+HeapDiff g_heap;
+
+void HeapDiffReset() {
+    g_heap.have = false;
+    g_heap.stage = 0;
+    g_heap.cand.clear();
+}
+
+void HeapDiffRefresh(double t) {
+    HeapDiff& h = g_heap;
+    size_t n = (kHeapHi - kHeapLo) / 4;
+    if (h.snap.size() != n) h.snap.assign(n, 0);
+    h.noisy.assign((n + 63) / 64, 0);
+    for (size_t i = 0; i < n; i++) {
+        uint32_t v = R32(kHeapLo + uint32_t(i) * 4);
+        if (h.have && v != h.snap[i]) h.noisy[i >> 6] |= 1ull << (i & 63);
+        h.snap[i] = v;
+    }
+    h.have = true;
+    h.last = t;
+}
+
+void HeapDiffStart() {
+    HeapDiff& h = g_heap;
+    if (!kHeapDiff || h.stage != 0 || !h.have) return;
+    h.event = Seconds();
+    h.stage = 1;
+    DiagLog("t=%.1f HEAP diff starts, baseline %.1f s old", h.event, h.event - h.last);
+}
+
+void HeapDiffTick(const Level& l) {
+    HeapDiff& h = g_heap;
+    if (!kHeapDiff) return;
+    double t = Seconds();
+    if (h.stage == 0) {
+        if (t - h.last >= 2.0) HeapDiffRefresh(t);
+    } else if (h.stage == 1 && t - h.event >= 1.0) {
+        h.cand.clear();
+        auto cluster = [](uint32_t v) { return v == 0 || v == 0x3FF || v == 0x401; };  // a block of effects flips these
+        for (size_t i = 0; i < h.snap.size(); i++) {
+            uint32_t a = kHeapLo + uint32_t(i) * 4, v = R32(a), b = h.snap[i];
+            if (v == b || (h.noisy[i >> 6] >> (i & 63) & 1)) continue;
+            bool small = b < 0x10000 && v < 0x10000 && !(cluster(b) && cluster(v));
+            bool fresh = b == 0 && v >= kHeapLo && v < kHeapHi && !(v & 3);
+            if ((small || fresh) && h.cand.size() < 300000) h.cand.push_back({a, b, v});
+        }
+        h.stage = 2;
+        DiagLog("t=%.1f HEAP %u candidates after one second", t, unsigned(h.cand.size()));
+    } else if (h.stage == 2 && t - h.event >= 2.0) {
+        int small_shown = 0, fresh_shown = 0, kept = 0;
+        for (int pass = 0; pass < 2; pass++)
+            for (const auto& c : h.cand) {
+                if (R32(c.addr) != c.after) continue;
+                bool small = c.before < 0x10000 && c.after < 0x10000;
+                if (small != (pass == 0)) continue;
+                if (pass == 0) kept++;
+                int& shown = small ? small_shown : fresh_shown;
+                if (shown >= (small ? 400 : 60)) continue;
+                shown++;
+                DiagLog("t=%.1f HEAP %s %08X (%s): %08X -> %08X", t, small ? "small" : "ptr", unsigned(c.addr),
+                        WatchName(l, c.addr).c_str(), unsigned(c.before), unsigned(c.after));
+            }
+        DiagLog("t=%.1f HEAP end: %d small words stayed changed", t, kept);
+        h.cand.clear();
+        h.have = false;  // the copy is stale now: the next one is a fresh baseline
+        h.stage = 0;
+        h.last = t;
+    }
+}
+
 void PickupWatch() {
     static bool dumped = false;
     static uint32_t last_med = 0xFFFFFFFF, last_cnt = 0xFFFFFFFF;
@@ -795,9 +914,11 @@ void PickupWatch() {
         w = Watch();
         dumped = false;
         last_med = last_cnt = 0xFFFFFFFF;
+        HeapDiffReset();
         return;
     }
     WeaponDump(l);
+    HeapDiffTick(l);
     if (uint32_t med = R32(l.inventory + 4); med != last_med) {  // medkit candidate: logged on every change (use too)
         if (last_med != 0xFFFFFFFF) DiagLog("t=%.1f MEDKIT? inventory+4: %08X -> %08X", Seconds(), unsigned(last_med), unsigned(med));
         last_med = med;
@@ -864,6 +985,7 @@ void PickupEvent(uint32_t category, uint32_t type, uint32_t ret) {
     if (!kTrack || category > 4 || !ReadLevel(l)) return;  // kind 0 too: the medkit may be it
     if (category == 0 && ret != 0x001BEDF8) return;  // kind 0 from another caller comes by the hundred (healing)
     DiagLog("t=%.1f pickup message: kind %u, type %u, caller %08X", Seconds(), category, type, unsigned(ret));
+    if (category == 4) HeapDiffStart();
     Watch& w = g_watch;
     if (w.event >= 0 || w.addr.empty() || w.hist.empty()) return;
     w.event = Seconds();
