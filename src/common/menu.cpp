@@ -916,7 +916,7 @@ void Defaults() {
 // options menu
 void DrawTitle(const char* caption) {
     std::string title = Ui(caption);
-    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
+    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 1.0f;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(title_pad, 0.0f));
     ImGui::TextUnformatted(title.c_str());
 }
