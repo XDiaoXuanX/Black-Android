@@ -1095,7 +1095,7 @@ void DrawUi(double fps) {
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
     // scale the font with the output height
-    io.FontGlobalScale = std::max(1.5f, io.DisplaySize.y / 720.0f);
+    io.FontGlobalScale = std::max(5.0f, io.DisplaySize.y / 720.0f);
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();
