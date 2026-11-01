@@ -973,7 +973,7 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 120, em * 80), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(em * 80, em * 50), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
