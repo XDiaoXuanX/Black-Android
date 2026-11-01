@@ -7,6 +7,8 @@
 #    It still needs the secrets below: the recompiler cannot run without the decrypted default.xbe.
 #  - pull request: not run here. Use the UI Preview workflow to test the interface from a branch.
 #
+# If a tag/release with the same name already exists, the old one is deleted and replaced with the new build.
+#
 # Secrets: XBE_KEY, KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
 name: Build Black Android CI ( Plus+ )
 
@@ -218,16 +220,53 @@ jobs:
           echo "release=$release"   >> "$GITHUB_OUTPUT"
           echo "GRADLE_ARGS=-PversionCode=${{ github.run_number }} -PversionName=$name" >> "$GITHUB_ENV"
 
-      - name: Verify tag is available (manual builds)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Clean up existing tag and release
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $TAG already exists. Set a different version or delete the tag first."
-            exit 1
+          set -uo pipefail
+          echo "Checking for existing tag/release: $TAG"
+
+          # -------------------------------------------------------------------
+          # 1) Delete the old GitHub release (if any) so it can be recreated.
+          # -------------------------------------------------------------------
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG found -> deleting"
+            if [ "$EVENT_NAME" = "push" ]; then
+              # Triggered by push tag: keep the tag itself, delete only the release
+              gh release delete "$TAG" --repo "$REPO" --yes || true
+            else
+              # Manual build: delete release AND tag together
+              gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag || true
+            fi
+          else
+            echo "No existing release: $TAG"
           fi
+
+          # -------------------------------------------------------------------
+          # 2) Delete the git tag (local & remote) - only for manual builds.
+          #    For push-tag events, the tag is the build target -> skip.
+          # -------------------------------------------------------------------
+          if [ "$EVENT_NAME" != "push" ]; then
+            if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+              echo "Remote tag $TAG found -> deleting"
+              gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" || true
+            else
+              echo "No remote tag: $TAG"
+            fi
+            if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "Local tag $TAG found -> deleting"
+              git tag -d "$TAG" || true
+            fi
+          else
+            echo "Triggered by push tag -> skipping tag deletion"
+          fi
+
+          echo "Cleanup done."
 
       - name: Build
         shell: cmd
