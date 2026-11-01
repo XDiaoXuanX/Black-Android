@@ -888,7 +888,7 @@ void Defaults() {
 // options menu
 void DrawTitle(const char* caption) {
     std::string title = Ui(caption);
-    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 1.0f;
+    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(title_pad, 0.0f));
     ImGui::TextUnformatted(title.c_str());
 }
@@ -1095,7 +1095,7 @@ void DrawUi(double fps) {
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
     // scale the font with the output height
-    io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 720.0f);
+    io.FontGlobalScale = std::max(1.5f, io.DisplaySize.y / 720.0f);
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();
