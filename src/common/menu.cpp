@@ -998,6 +998,25 @@ void PaceAt(uint32_t cap) {
     while (clock::now() < next) std::this_thread::yield();
 }
 
+// the panel's own layout in ems: 80 wide, 50 tall, both scaled with the font
+constexpr float kPanelWideEms = 80.0f;
+constexpr float kPanelTallEms = 50.0f;
+constexpr float kPanelMargin = 1.08f;  // 8% slack, so the border is never flush against the screen edge
+
+// the interface's scale: the display's smaller side against a 720p phone baseline gives the density (a 720p phone
+// and a 1440p tablet both get text that fills the same fraction of the screen), then capped so the panel still fits
+// both dimensions, and clamped so it never grows past a legible minimum or shrinks the panel below a phone's
+float InterfaceScale(ImGuiIO& io) {
+    // the unscaled font size, since GetFontSize() already includes the scale we are about to set
+    float font_base = io.FontGlobalScale > 0.0f ? ImGui::GetFontSize() / io.FontGlobalScale : 16.0f;
+    // the panel's width and height in pixels at scale 1, then the largest scale that still fits both
+    float fit_x = io.DisplaySize.x / (kPanelWideEms * font_base * kPanelMargin);
+    float fit_y = io.DisplaySize.y / (kPanelTallEms * font_base * kPanelMargin);
+    // a 720p phone (the densest phone baseline) sits at 1.0; a 1080p phone at 1.5; a 1440p tablet at 2.0
+    float density = std::min(io.DisplaySize.x, io.DisplaySize.y) / 720.0f;
+    return std::clamp(std::min({density, fit_x, fit_y}), 0.7f, 2.5f);
+}
+
 }  // namespace
 
 void PaceFrame() {
@@ -1094,8 +1113,9 @@ void DrawUi(double fps) {
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
-    // scale the font with the output height
-    io.FontGlobalScale = std::max(1.8f, io.DisplaySize.y / 720.0f);
+    // scale the interface to the device's screen: density from the smaller side against a 720p baseline, capped
+    // so the panel still fits both dimensions and clamped so it stays legible (see InterfaceScale)
+    io.FontGlobalScale = InterfaceScale(io);
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();
