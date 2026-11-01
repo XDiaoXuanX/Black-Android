@@ -11,10 +11,13 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <jni.h>
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_system.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+
 
 #include "app/app.h"
 #include "audio/output.h"
@@ -250,7 +253,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold };
+             kDynamicMax, kDynamicHold, kAutoUpdate };
 
 using rows::Kind;
 using rows::Row;
@@ -314,7 +317,9 @@ constexpr Row kGeneralRows[] = {
     {Kind::Value, kAudioOutput, "AUDIO OUTPUT"},
     {Kind::Heading, -1, "UPDATES"},
     {Kind::Value, kCheckUpdates, "CHECK FOR UPDATES"},
+    {Kind::Value, kAutoUpdate, "STARTUP UPDATE CHECK"},
 };
+
 
 // a page of its own, apart from the recomp's settings
 constexpr Row kCheatRows[] = {
@@ -641,6 +646,38 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), format, kLanguageNames[i]);
             break;
         }
+           case kAutoUpdate: {
+    // Mendapatkan lingkungan JNI dari SDL / Native Activity
+    JNIEnv* env = (JNIEnv*)SDL_GetAndroidJNIEnv();
+    jobject activity = (jobject)SDL_GetAndroidActivity();
+    if (env && activity) {
+        jclass clazz = env->GetObjectClass(activity);
+        
+        // Membaca status saat ini dari SharedPreferences via Java method
+        jmethodID getMethod = env->GetStaticMethodID(clazz, "isStartupCheckEnabled", "(Landroid/content/Context;)Z");
+        bool auto_check = true;
+        if (getMethod) {
+            auto_check = env->CallStaticBooleanMethod(clazz, getMethod, activity);
+        }
+
+        // Jika tombol ditekan (step != 0), ubah statusnya (toggle)
+        if (step) {
+            auto_check = !auto_check;
+            jmethodID setMethod = env->GetStaticMethodID(clazz, "setStartupCheckEnabled", "(Landroid/content/Context;Z)V");
+            if (setMethod) {
+                env->CallStaticVoidMethod(clazz, setMethod, activity, (jboolean)auto_check);
+            }
+        }
+        
+        env->DeleteLocalRef(clazz);
+        env->DeleteLocalRef(activity);
+        
+        std::snprintf(text, sizeof(text), "%s", OnOff(auto_check));
+    } else {
+        std::snprintf(text, sizeof(text), "OFF");
+    }
+    break;
+      }
     }
 }
 
@@ -857,8 +894,10 @@ void DrawWeapons() {
         if (c.held) ImGui::PopStyleColor();
         ImGui::PopID();
     }
-    Section("AMMUNITION");
+    Section("SUPPLIES");
     if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(w, 0))) weapons::FillAmmo();
+    ImGui::SameLine();
+    if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(w, 0))) weapons::FillMedkits();
     if (!v.status.empty()) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
@@ -934,7 +973,7 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 50, em * 32), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(em * 120, em * 80), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -947,7 +986,7 @@ void DrawPanel() {
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         // a scrollbar a thumb can take, not the desktop's thin one
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.4f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.8f);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.5f);
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
