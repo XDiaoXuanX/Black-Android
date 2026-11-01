@@ -824,6 +824,11 @@ void WeaponDump(const Level& l) {
 // differ and were quiet before are kept, and another second later only those still holding the new value are logged.
 constexpr bool kHeapDiff = true;
 constexpr uint32_t kHeapLo = 0x81000000, kHeapHi = 0x84000000;
+// the game's own globals (.data/.bss of the image) are copied too: the heap alone showed only HUD and effect words
+constexpr uint32_t kLowLo = 0x280000, kLowHi = 0x400000;
+constexpr size_t kLowWords = (kLowHi - kLowLo) / 4;
+constexpr size_t kHeapWords = (kHeapHi - kHeapLo) / 4;
+inline uint32_t HeapAddr(size_t i) { return i < kLowWords ? kLowLo + uint32_t(i) * 4 : kHeapLo + uint32_t(i - kLowWords) * 4; }
 struct HeapDiff {
     struct Cand {
         uint32_t addr, before, after;
@@ -832,24 +837,50 @@ struct HeapDiff {
     std::vector<uint64_t> noisy;  // one bit a word: changed between the last two copies
     std::vector<Cand> cand;
     double event = -1, last = -100;
-    bool have = false;
+    bool have = false, dumped_start = false;
     int stage = 0;  // 0 copying every two seconds, 1 waits a second, 2 candidates, waits another second
 };
 HeapDiff g_heap;
 
+// words around the candidates the last diff found (83241968: 0 -> 5 is the AK's table index, 83241A88: 0 -> 0xB, ...)
+void DumpWords(const char* label, uint32_t addr, uint32_t bytes) {
+    for (uint32_t o = 0; o < bytes; o += 32) {
+        uint32_t w[8];
+        bool any = false;
+        for (int i = 0; i < 8; i++) {
+            w[i] = R32(addr + o + uint32_t(i) * 4);
+            any = any || w[i] != 0;
+        }
+        if (any)
+            DiagLog("DUMP %s %08X: %08X %08X %08X %08X %08X %08X %08X %08X", label, unsigned(addr + o), unsigned(w[0]),
+                    unsigned(w[1]), unsigned(w[2]), unsigned(w[3]), unsigned(w[4]), unsigned(w[5]), unsigned(w[6]),
+                    unsigned(w[7]));
+    }
+}
+
+[[maybe_unused]] void ProbeDump(const char* label) {
+    static const struct {
+        uint32_t addr, bytes;
+    } regions[] = {{0x83241940, 0x1C0}, {0x82039BC0, 0x40}, {0x8203BB00, 0x60},
+                   {0x82073340, 0x60},  {0x83315400, 0x80}, {0x83D3F160, 0x60}};
+    DiagLog("t=%.1f DUMP %s", Seconds(), label);
+    for (const auto& r : regions) DumpWords(label, r.addr, r.bytes);
+}
+
 void HeapDiffReset() {
     g_heap.have = false;
+    g_heap.dumped_start = false;
     g_heap.stage = 0;
     g_heap.cand.clear();
 }
 
 void HeapDiffRefresh(double t) {
     HeapDiff& h = g_heap;
-    size_t n = (kHeapHi - kHeapLo) / 4;
+    size_t n = kLowWords + kHeapWords;
     if (h.snap.size() != n) h.snap.assign(n, 0);
     h.noisy.assign((n + 63) / 64, 0);
     for (size_t i = 0; i < n; i++) {
-        uint32_t v = R32(kHeapLo + uint32_t(i) * 4);
+        uint32_t v = R32(HeapAddr(i));
         if (h.have && v != h.snap[i]) h.noisy[i >> 6] |= 1ull << (i & 63);
         h.snap[i] = v;
     }
@@ -875,8 +906,9 @@ void HeapDiffTick(const Level& l) {
         h.cand.clear();
         auto cluster = [](uint32_t v) { return v == 0 || v == 0x3FF || v == 0x401; };  // a block of effects flips these
         for (size_t i = 0; i < h.snap.size(); i++) {
-            uint32_t a = kHeapLo + uint32_t(i) * 4, v = R32(a), b = h.snap[i];
+            uint32_t a = HeapAddr(i), v = R32(a), b = h.snap[i];
             if (v == b || (h.noisy[i >> 6] >> (i & 63) & 1)) continue;
+            if (a >= 0x815A0000 && a < 0x815B2000) continue;  // the effect pool, cleared at every pickup
             bool small = b < 0x10000 && v < 0x10000 && !(cluster(b) && cluster(v));
             bool fresh = b == 0 && v >= kHeapLo && v < kHeapHi && !(v & 3);
             if ((small || fresh) && h.cand.size() < 300000) h.cand.push_back({a, b, v});
