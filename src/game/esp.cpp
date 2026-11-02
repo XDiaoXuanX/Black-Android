@@ -1,6 +1,6 @@
-// The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
-// drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims in the view
-// turns to the neck just under the head of the living enemy nearest the crosshair
+// The cheats page's ESP LINES: each living enemy and the player get a box round them and a line to them from
+// the bottom of the screen, drawn over the finished frame with the view the scene was drawn with. AIMBOT: while
+// the player aims in the view turns to the neck just under the head of the living enemy nearest the crosshair
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -67,7 +67,8 @@ struct Vertex {
     float x, y;
 };
 constexpr size_t kSegments = 5;  // the line and the box's four sides
-constexpr size_t kMaxVertices = kMaxEnemies * kSegments * 6;
+// enough for every enemy plus one box for the player
+constexpr size_t kMaxVertices = (kMaxEnemies + 1) * kSegments * 6;
 
 void Remember(uint32_t who) {
     auto now = std::chrono::steady_clock::now();
@@ -145,6 +146,7 @@ void Aimbot(X86Context& ctx) {
     float best = kCone, yaw = 0, pitch = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
+        if (who == me) continue;  // never aim at yourself
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         const float* at = &G<float>(who + kCharPosition);
         float head[3] = {at[0], at[1] + kNeckHead, at[2]}, clip[4];
@@ -161,6 +163,8 @@ void Aimbot(X86Context& ctx) {
 // D3DVIEWPORT8: x, y, width, height. Called between the 2D layer's begin and end
 void DrawEsp(X86Context& ctx, float unit) {
     if (!Opt().esp || !g_camera || !R32(kWorld)) return;
+    uint32_t world = R32(kWorld);
+    uint32_t me = world + kWorldPlayer;
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
@@ -176,15 +180,14 @@ void DrawEsp(X86Context& ctx, float unit) {
     float width = kThickness * unit;
     auto now = std::chrono::steady_clock::now();
     size_t kept = 0;
-    for (size_t i = 0; i < g_count; i++) {
-        uint32_t who = g_seen[i].who;
-        if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
-        g_seen[kept++] = g_seen[i];
+
+    // a box round a character and a line to it from the bottom of the screen
+    auto draw = [&](uint32_t who) {
         const float* at = &G<float>(who + kCharPosition);
         float feet[3] = {at[0], at[1], at[2]};
         float head[3] = {at[0], at[1] + kHeight, at[2]};
         float f[2], h[2];
-        if (!Project(feet, vx, vy, vw, vh, f) || !Project(head, vx, vy, vw, vh, h)) continue;
+        if (!Project(feet, vx, vy, vw, vh, f) || !Project(head, vx, vy, vw, vh, h)) return;
         float half = (f[1] - h[1]) * kBoxWidth * 0.5f;
         float left = f[0] - half, right = f[0] + half;
         v = Segment(v, vx + vw * 0.5f, vy + vh, f[0], f[1], width);
@@ -192,8 +195,22 @@ void DrawEsp(X86Context& ctx, float unit) {
         v = Segment(v, left, f[1], right, f[1], width);
         v = Segment(v, left, h[1], left, f[1], width);
         v = Segment(v, right, h[1], right, f[1], width);
+    };
+
+    // enemies: only kind 1, only while alive, only while recently seen
+    for (size_t i = 0; i < g_count; i++) {
+        uint32_t who = g_seen[i].who;
+        if (who == me) continue;  // the player is drawn separately below
+        if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
+        g_seen[kept++] = g_seen[i];
+        draw(who);
     }
     g_count = kept;
+
+    // the player: its update is a different function (0x1E5FA0, not sub_001DFD90), so it never enters the list.
+    // Read it straight from the world and draw it while it is not dying
+    if (me && !R32(me + kCharDying)) draw(me);
+
     if (v == first) return;
     W32(offset, 0);
     W32(offset + 4, 0);
@@ -212,6 +229,10 @@ void DrawEsp(X86Context& ctx, float unit) {
 X86_EXTERN_FUNC(__imp__sub_001DFD90);
 X86_FUNC(sub_001DFD90) {
     uint32_t who = ctx.ecx;
-    if ((game::Opt().esp || game::Opt().aimbot) && who && R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying)) Remember(who);
+    uint32_t world = R32(kWorld);
+    bool is_self = world && who == world + kWorldPlayer;  // the player is drawn directly in DrawEsp
+    if ((game::Opt().esp || game::Opt().aimbot) && who && !is_self &&
+        R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying))
+        Remember(who);
     __imp__sub_001DFD90(ctx, base);
 }
