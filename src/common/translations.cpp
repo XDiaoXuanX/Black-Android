@@ -163,6 +163,7 @@ constexpr Entry kEntries[] = {
     {"FILL MEDKITS", {{}, {}, {}, {}, u"Isi P3K"}},
     {"CHECK FOR UPDATES", {u"Rechercher des mises à jour", u"Nach Updates suchen", u"Cerca aggiornamenti", u"Buscar actualizaciones", u"Cek pembaruan"}},
     {"CHECK", {u"Rechercher", u"Suchen", u"Cerca", u"Buscar", u"Cek"}},
+    {"STARTUP UPDATE CHECK", {u"Rechercher au démarrage", u"Beim Start suchen", u"Cerca all'avvio", u"Buscar al iniciar", u"Cek saat mulai"}},
     {"BUTTON STYLE", {u"Style des boutons", u"Tastenstil", u"Stile dei pulsanti", u"Estilo de botones", u"Gaya tombol"}},
     {"CLASSIC", {u"Classique", u"Klassisch", u"Classico", u"Clásico", u"Klasik"}},
     {"CLEAN", {u"Épuré", u"Schlicht", u"Pulito", u"Limpio", u"Polos"}},
@@ -220,6 +221,7 @@ constexpr Entry kEntries[] = {
     {"Right click or Delete clears the key", {u"Clic droit ou Suppr pour effacer la touche", u"Rechtsklick oder Entf löscht die Taste", u"Clic destro o Canc per cancellare il tasto", u"Clic derecho o Supr para borrar la tecla", u"Klik kanan atau Delete untuk menghapus tombol"}},
 
     // the touch layout editor
+            // the touch layout editor
     {"RESET", {{}, {}, {}, {}, u"Atur ulang"}},
     {"CANCEL", {{}, {}, {}, {}, u"Batal"}},
     {"DONE", {{}, {}, {}, {}, u"Selesai"}},
@@ -227,6 +229,15 @@ constexpr Entry kEntries[] = {
     {"SHOW", {{}, {}, {}, {}, u"Tampilkan"}},
     {"TAP A CONTROL, THEN HIDE OR SHOW", {{}, {}, {}, {}, u"Ketuk kontrol, lalu sembunyikan atau tampilkan"}},
     {"DRAG A CONTROL TO MOVE IT", {{}, {}, {}, {}, u"Seret kontrol untuk memindahkannya"}},
+
+    // footer hint + panel cheat   <-- BARU
+    {"DRAG", {{}, {}, {}, {}, u"Seret"}},
+    {"TAP", {{}, {}, {}, {}, u"Ketuk"}},
+    {"GIVE A WEAPON", {{}, {}, {}, {}, u"Beri senjata"}},
+    {"AMMUNITION", {{}, {}, {}, {}, u"Amunisi"}},
+    {"FILL AMMUNITION", {{}, {}, {}, {}, u"Isi amunisi"}},
+    {"Start or continue a level to choose its weapons.", {{}, {}, {}, {}, u"Mulai atau lanjutkan level untuk memilih senjata."}},
+    {"A weapon replaces the one not in hand, gold names are held", {{}, {}, {}, {}, u"Senjata menggantikan yang tidak dipegang, nama emas sedang dipegang"}},
 };
 
 bool Same(std::string_view a, std::string_view b) {

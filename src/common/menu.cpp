@@ -96,8 +96,10 @@ constexpr std::pair<ImGuiCol, ImVec4> kPanelColors[] = {
 
 constexpr uint32_t kAnisoValues[] = {0, 2, 4, 8, 16};
 const char* const kAnisoNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "16x"};
-constexpr uint32_t kDistances[] = {1, 2, 4, 8};
-const char* const kDistanceNames[] = {"GAME DEFAULT", "2x", "4x", "8x"};
+constexpr uint32_t kDistances[] = {1, 2, 4, 8, 12, 16};
+const char* const kDistanceNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "12x", "16x"};
+constexpr uint32_t kMsaaValues[] = {0, 2, 4, 8};
+const char* const kMsaaNames[] = {"OFF", "2x", "4x", "8x"};
 constexpr uint32_t kAntiAliasings[] = {0, 1, 2};
 const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 constexpr uint32_t kFmvScales[] = {0, 1};
@@ -249,7 +251,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
+             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
@@ -279,6 +281,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kBloom, "BLOOM"},
     {Kind::Value, kFog, "FOG"},
     {Kind::Value, kAntiAliasing, "ANTI-ALIASING"},
+    {Kind::Value, kMsaa, "MSAA"},
     {Kind::Value, kHdr, "HDR"},
 };
 
@@ -472,6 +475,9 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s",
                           kAntiAliasingNames[StepTable(kAntiAliasings, o.anti_aliasing, step)]);
             return true;
+        case kMsaa:
+           std::snprintf(text, sizeof(text), "%s", kMsaaNames[StepTable(kMsaaValues, o.msaa, step)]);
+           return true;
         case kScreenFilter:
             std::snprintf(text, sizeof(text), "%s",
                           kScreenFilterNames[StepTable(kScreenFilters, o.screen_filter, step)]);
@@ -517,7 +523,7 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
     switch (id) {
         case kRapidFire:
             // off, then 2 to 4 times the rate
-            if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 4, 1, step));
+            if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 8, 1, step));
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
@@ -986,7 +992,7 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 50, em * 32), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(em * 80, em * 50), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -999,7 +1005,7 @@ void DrawPanel() {
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         // a scrollbar a thumb can take, not the desktop's thin one
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.4f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.8f);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.5f);
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
@@ -1037,6 +1043,25 @@ void PaceAt(uint32_t cap) {
     if (next < now - period) next = now;
     while (clock::now() + std::chrono::milliseconds(2) < next) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     while (clock::now() < next) std::this_thread::yield();
+}
+
+// the panel's own layout in ems: 80 wide, 50 tall, both scaled with the font
+constexpr float kPanelWideEms = 80.0f;
+constexpr float kPanelTallEms = 50.0f;
+constexpr float kPanelMargin = 1.08f;  // 8% slack, so the border is never flush against the screen edge
+
+// the interface's scale: the display's smaller side against a 720p phone baseline gives the density (a 720p phone
+// and a 1440p tablet both get text that fills the same fraction of the screen), then capped so the panel still fits
+// both dimensions, and clamped so it never grows past a legible minimum or shrinks the panel below a phone's
+float InterfaceScale(ImGuiIO& io) {
+    // the unscaled font size, since GetFontSize() already includes the scale we are about to set
+    float font_base = io.FontGlobalScale > 0.0f ? ImGui::GetFontSize() / io.FontGlobalScale : 16.0f;
+    // the panel's width and height in pixels at scale 1, then the largest scale that still fits both
+    float fit_x = io.DisplaySize.x / (kPanelWideEms * font_base * kPanelMargin);
+    float fit_y = io.DisplaySize.y / (kPanelTallEms * font_base * kPanelMargin);
+    // a 720p phone (the densest phone baseline) sits at 1.0; a 1080p phone at 1.5; a 1440p tablet at 2.0
+    float density = std::min(io.DisplaySize.x, io.DisplaySize.y) / 720.0f;
+    return std::clamp(std::min({density, fit_x, fit_y}), 0.7f, 2.5f);
 }
 
 }  // namespace
@@ -1135,8 +1160,9 @@ void DrawUi(double fps) {
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
-    // scale the font with the output height
-    io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 720.0f);
+    // scale the interface to the device's screen: density from the smaller side against a 720p baseline, capped
+    // so the panel still fits both dimensions and clamped so it stays legible (see InterfaceScale)
+    io.FontGlobalScale = InterfaceScale(io);
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();
