@@ -69,21 +69,6 @@ struct Vertex {
 constexpr size_t kSegments = 5;  // the line and the box's four sides
 constexpr size_t kMaxVertices = kMaxEnemies * kSegments * 6;
 
-// Whether a remembered character is a live enemy that the cheats are allowed to draw and aim at:
-//  - kind 1 is the game's own enemy tag (the exact field its built-in aim assist keys on),
-//  - a set dying flag rules out corpses and respawns whose update still ticks,
-//  - and the timestamp check drops anyone whose update stopped running (pause, disconnect, out of range).
-// The player, allies, spectators, cutscene actors and already-dead bodies have a different kind (or are
-// dying) and are therefore ignored by both ESP and aimbot.
-inline bool IsLiveEnemy(uint32_t who, std::chrono::steady_clock::time_point now,
-                        std::chrono::steady_clock::time_point seen) {
-    if (!who) return false;
-    if (now - seen > kSeen) return false;
-    if (R32(who + kCharKind) != kEnemyKind) return false;
-    if (R32(who + kCharDying)) return false;
-    return true;
-}
-
 void Remember(uint32_t who) {
     auto now = std::chrono::steady_clock::now();
     for (size_t i = 0; i < g_count; i++)
@@ -149,8 +134,7 @@ void EspCamera() {
 // esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw; while the
 // player aims in. The turn is read off the projection, the angles of the target from the middle of the view.
 // The target is the neck just under the chin (kNeckHead), so the crosshair lands on the same lethal line the
-// game's own head shot registers on, without floating above a crouching enemy.
-// Only live enemies (IsLiveEnemy) are considered — the aimbot never pulls to allies, corpses or props.
+// game's own head shot registers on, without floating above a crouching enemy
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
@@ -161,7 +145,7 @@ void Aimbot(X86Context& ctx) {
     float best = kCone, yaw = 0, pitch = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
-        if (!IsLiveEnemy(who, now, g_seen[i].at)) continue;
+        if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         const float* at = &G<float>(who + kCharPosition);
         float head[3] = {at[0], at[1] + kNeckHead, at[2]}, clip[4];
         if (!Clip(head, clip)) continue;
@@ -194,7 +178,7 @@ void DrawEsp(X86Context& ctx, float unit) {
     size_t kept = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
-        if (!IsLiveEnemy(who, now, g_seen[i].at)) continue;
+        if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         g_seen[kept++] = g_seen[i];
         const float* at = &G<float>(who + kCharPosition);
         float feet[3] = {at[0], at[1], at[2]};
@@ -224,13 +208,10 @@ void DrawEsp(X86Context& ctx, float unit) {
 }  // namespace game
 
 // The characters' update, a frame (ecx the character, its class's own; the player's is 0x1E5FA0): the enemies
-// that ran it are the ones drawn. Only kind 1 (the game's own enemy tag) that is not dying is remembered —
-// everything else, including allies and the player, is filtered out at the source so it can never reach the
-// ESP or aimbot loops.
+// that ran it are the ones drawn
 X86_EXTERN_FUNC(__imp__sub_001DFD90);
 X86_FUNC(sub_001DFD90) {
     uint32_t who = ctx.ecx;
-    if ((game::Opt().esp || game::Opt().aimbot) && who && R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying))
-        Remember(who);
+    if ((game::Opt().esp || game::Opt().aimbot) && who && R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying)) Remember(who);
     __imp__sub_001DFD90(ctx, base);
 }
