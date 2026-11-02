@@ -1,6 +1,6 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
-// drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims in the view
-// turns to the neck just under the head of the living enemy nearest the crosshair
+// drawn over the finished frame with the view the scene was drawn with. AIMBOT: the view turns to the neck just
+// under the head of the living enemy nearest the crosshair
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -25,8 +25,6 @@ constexpr uint32_t kEnemyKind = 1;
 // the player's controller: yaw positive left, pitch positive down, in degrees (mouse.cpp)
 constexpr uint32_t kControllerYaw = 0x18;
 constexpr uint32_t kControllerPitch = 0x1C;
-// the player's zoom of the aim, above 1 while it aims in (hooks.cpp's ZoomStep)
-constexpr uint32_t kPlayerZoom = 0x2A4;
 
 constexpr float kHeight = 1.8f;      // world units are metres: the near plane is 0.08
 constexpr float kBoxWidth = 0.45f;   // of the box's height
@@ -131,15 +129,14 @@ void EspCamera() {
     g_camera_frame++;
 }
 
-// esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw; while the
-// player aims in. The turn is read off the projection, the angles of the target from the middle of the view.
-// The target is the neck just under the chin (kNeckHead), so the crosshair lands on the same lethal line the
-// game's own head shot registers on, without floating above a crouching enemy
+// esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw. The turn
+// is read off the projection, the angles of the target from the middle of the view. The target is the neck just
+// under the chin (kNeckHead), so the crosshair lands on the same lethal line the game's own head shot registers
+// on, without floating above a crouching enemy. Works zoomed or not: no zoom gate.
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
-    uint32_t me = R32(kWorld) ? R32(kWorld) + kWorldPlayer : 0;
-    if (!Opt().aimbot || !g_camera || !me || turned == g_camera_frame || !(G<float>(me + kPlayerZoom) > 1.01f)) return;
+    if (!Opt().aimbot || !g_camera || !R32(kWorld) || turned == g_camera_frame) return;
     turned = g_camera_frame;
     auto now = std::chrono::steady_clock::now();
     float best = kCone, yaw = 0, pitch = 0;
