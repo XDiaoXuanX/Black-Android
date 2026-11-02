@@ -29,7 +29,8 @@ android {
         versionCode project.hasProperty("versionCode") ? project.versionCode.toInteger() : 1
         versionName project.hasProperty("versionName") ? project.versionName : "1.0"
         ndk {
-            abiFilters "arm64-v8a"
+            // Ship both 64-bit and 32-bit ARM variants so older ARMv7 devices can install the app
+            abiFilters "arm64-v8a", "armeabi-v7a"
         }
         externalNativeBuild {
             cmake {
@@ -38,6 +39,15 @@ android {
                 if (project.hasProperty("xbeGenerated")) arguments "-DXBE_GENERATED=${project.xbeGenerated}"
                 if (project.hasProperty("xbeImage")) arguments "-DXBE_IMAGE=${project.xbeImage}"
             }
+        }
+    }
+
+    splits {
+        abi {
+            enable true
+            reset()
+            include "arm64-v8a", "armeabi-v7a"
+            universalApk false
         }
     }
 
