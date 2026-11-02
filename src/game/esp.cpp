@@ -1,11 +1,6 @@
-// The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the
-// screen, drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims
-// in the view turns to the neck just under the head of the living enemy nearest the crosshair.
-//
-// TARGETING: ESP and aimbot share IsEnemyCharacter, which keeps only characters the game flags as enemies
-// (kind == kEnemyKind), skips ones that are dying, and — when the team filter is configured — skips any
-// character sharing the player's team. That last part is what stops co-op allies that some builds also flag
-// kind == 1 from being marked or aimed at.
+// The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
+// drawn over the finished frame with the view the scene was drawn with. AIMBOT: while the player aims in the view
+// turns to the neck just under the head of the living enemy nearest the crosshair
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -32,14 +27,6 @@ constexpr uint32_t kControllerYaw = 0x18;
 constexpr uint32_t kControllerPitch = 0x1C;
 // the player's zoom of the aim, above 1 while it aims in (hooks.cpp's ZoomStep)
 constexpr uint32_t kPlayerZoom = 0x2A4;
-
-// OPTIONAL TEAM FILTER, off by default (both 0).
-// Set kCharTeam to the offset of the team/faction field inside a character, and kPlayerChar to the offset
-// inside the player (controller) that holds a pointer to the player's own character. When both are set,
-// Remember(), DrawEsp() and Aimbot() drop any character whose team matches the player's. Leave at 0 in
-// single-player, where kind == kEnemyKind is already the right filter.
-constexpr uint32_t kCharTeam = 0;
-constexpr uint32_t kPlayerChar = 0;
 
 constexpr float kHeight = 1.8f;      // world units are metres: the near plane is 0.08
 constexpr float kBoxWidth = 0.45f;   // of the box's height
@@ -82,35 +69,22 @@ struct Vertex {
 constexpr size_t kSegments = 5;  // the line and the box's four sides
 constexpr size_t kMaxVertices = kMaxEnemies * kSegments * 6;
 
-// the player's own character (0 if unknown). Only touched when the team filter is configured.
-// world + kWorldPlayer is the controller; kPlayerChar is the offset within it to a pointer to the character.
-uint32_t PlayerCharacter() {
-    uint32_t world = R32(kWorld);
-    if (!world) return 0;
-    return R32(world + kWorldPlayer + kPlayerChar);
-}
-
-// true if a character is a living enemy the cheats may mark. kind == kEnemyKind is the game's
-// own "the aim assist takes this" flag; the team filter, when configured, also drops any
-// character on the player's team even if some builds flag those as kind == 1.
-bool IsEnemyCharacter(uint32_t who) {
+// Whether a remembered character is a live enemy that the cheats are allowed to draw and aim at:
+//  - kind 1 is the game's own enemy tag (the exact field its built-in aim assist keys on),
+//  - a set dying flag rules out corpses and respawns whose update still ticks,
+//  - and the timestamp check drops anyone whose update stopped running (pause, disconnect, out of range).
+// The player, allies, spectators, cutscene actors and already-dead bodies have a different kind (or are
+// dying) and are therefore ignored by both ESP and aimbot.
+inline bool IsLiveEnemy(uint32_t who, std::chrono::steady_clock::time_point now,
+                        std::chrono::steady_clock::time_point seen) {
     if (!who) return false;
-    if (R32(who + kCharKind) != kEnemyKind) return false;  // not an enemy
-    if (R32(who + kCharDying)) return false;               // already down
-    if (kCharTeam && kPlayerChar) {                        // optional ally filter
-        uint32_t pc = PlayerCharacter();
-        if (pc && R32(who + kCharTeam) == R32(pc + kCharTeam)) return false;
-    }
+    if (now - seen > kSeen) return false;
+    if (R32(who + kCharKind) != kEnemyKind) return false;
+    if (R32(who + kCharDying)) return false;
     return true;
 }
 
-// true if a remembered character is a live target right now (recently updated + still an enemy)
-bool IsEnemyTarget(uint32_t who, std::chrono::steady_clock::time_point now, const Seen& s) {
-    return now - s.at <= kSeen && IsEnemyCharacter(who);
-}
-
 void Remember(uint32_t who) {
-    if (!IsEnemyCharacter(who)) return;
     auto now = std::chrono::steady_clock::now();
     for (size_t i = 0; i < g_count; i++)
         if (g_seen[i].who == who) {
@@ -175,7 +149,8 @@ void EspCamera() {
 // esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw; while the
 // player aims in. The turn is read off the projection, the angles of the target from the middle of the view.
 // The target is the neck just under the chin (kNeckHead), so the crosshair lands on the same lethal line the
-// game's own head shot registers on, without floating above a crouching enemy
+// game's own head shot registers on, without floating above a crouching enemy.
+// Only live enemies (IsLiveEnemy) are considered — the aimbot never pulls to allies, corpses or props.
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
@@ -186,7 +161,7 @@ void Aimbot(X86Context& ctx) {
     float best = kCone, yaw = 0, pitch = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
-        if (!IsEnemyTarget(who, now, g_seen[i])) continue;
+        if (!IsLiveEnemy(who, now, g_seen[i].at)) continue;
         const float* at = &G<float>(who + kCharPosition);
         float head[3] = {at[0], at[1] + kNeckHead, at[2]}, clip[4];
         if (!Clip(head, clip)) continue;
@@ -219,7 +194,7 @@ void DrawEsp(X86Context& ctx, float unit) {
     size_t kept = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
-        if (!IsEnemyTarget(who, now, g_seen[i])) continue;
+        if (!IsLiveEnemy(who, now, g_seen[i].at)) continue;
         g_seen[kept++] = g_seen[i];
         const float* at = &G<float>(who + kCharPosition);
         float feet[3] = {at[0], at[1], at[2]};
@@ -249,9 +224,13 @@ void DrawEsp(X86Context& ctx, float unit) {
 }  // namespace game
 
 // The characters' update, a frame (ecx the character, its class's own; the player's is 0x1E5FA0): the enemies
-// that ran it are the ones drawn. Remember() applies the enemy/team filter itself.
+// that ran it are the ones drawn. Only kind 1 (the game's own enemy tag) that is not dying is remembered —
+// everything else, including allies and the player, is filtered out at the source so it can never reach the
+// ESP or aimbot loops.
 X86_EXTERN_FUNC(__imp__sub_001DFD90);
 X86_FUNC(sub_001DFD90) {
-    if (game::Opt().esp || game::Opt().aimbot) Remember(ctx.ecx);
+    uint32_t who = ctx.ecx;
+    if ((game::Opt().esp || game::Opt().aimbot) && who && R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying))
+        Remember(who);
     __imp__sub_001DFD90(ctx, base);
 }
