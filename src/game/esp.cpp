@@ -1,6 +1,8 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
 // drawn over the finished frame with the view the scene was drawn with. AIMBOT: the view turns to the point on the
-// living enemy nearest the crosshair chosen by aimbot_target (neck, body or legs)
+// living enemy nearest the crosshair chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each frame,
+// but never inside aimbot_deadzone
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -38,20 +40,23 @@ constexpr float kThickness = 1.5f;   // lines of a 480 frame
 //     moves — the safe default for the player who wants hits, not just assists.
 //   2 LEGS: the thighs. Slows a sprinting enemy without the two-shot kill, at the cost of the head being far
 //     from the crosshair.
-constexpr float kAimHeights[3] = {
+//   3 HEAD: the headshot line, between the jaw (≈1.60) and the top of the skull (≈1.75). Most lethal, but the
+//     most sensitive to the bob of a walking or crouching enemy — a 1.68 point floats above a crouched skull,
+//     so it works best against standing, slow-moving targets.
+constexpr float kAimHeights[4] = {
     1.55f,  // NECK (default)
     1.15f,  // BODY
     0.45f,  // LEGS
+    1.68f,  // HEAD
 };
 
+// aimbot_pull and aimbot_deadzone are read from Opt() every frame:
+//   pull = aimbot_pull / 100 (1% to 100% of the angle to the target, each frame). 15% the default: a gentle
+//     assist the mouse still wins against, so the crosshair can be slid off one enemy and onto the next.
+//   deadzone = aimbot_deadzone / 10 degrees (0.0° to 30.0°). Inside it the aimbot does not turn, leaving the
+//     player free to move the crosshair; a larger deadzone makes switching to another enemy easier, a smaller
+//     one keeps the crosshair locked on the current target.
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
-// how much of the angle to the target is applied each frame. 1.0 snapped the view onto the enemy and felt
-// glued: nothing the player did could move off it while the target stayed inside the cone. A low fraction is a
-// pull the mouse still wins against, so the crosshair can be slid off one enemy and onto the next.
-constexpr float kPull = 0.15f;       // of the turn to the target, a frame
-// no correction once the crosshair is this close to the target: kills the micro-jitter of a locked view and
-// leaves the last few degrees to the player
-constexpr float kDeadzone = 1.5f;    // degrees
 constexpr float kDegrees = 180.0f / 3.14159265f;
 // soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
 constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
@@ -145,18 +150,21 @@ void EspCamera() {
 
 // esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw. The turn
 // is read off the projection, the angles of the target from the middle of the view. The target height is picked
-// by aimbot_target — NECK (lethal, default), BODY (centre mass), or LEGS (slows) — so the crosshair lands where
-// the player chose to aim. Works zoomed or not: no zoom gate.
-//
-// The turn is only a fraction of the angle (kPull) and none at all inside kDeadzone, so it assists tracking
-// instead of locking: the player's own look still moves the crosshair off one enemy and onto the next.
+// by aimbot_target (NECK / BODY / LEGS / HEAD), the strength of the turn by aimbot_pull, and the deadzone inside
+// which no turn is applied at all by aimbot_deadzone — so the player chooses both the magnet and how freely the
+// crosshair slides from one enemy to the next. Works zoomed or not: no zoom gate.
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
     if (!Opt().aimbot || !g_camera || !R32(kWorld) || turned == g_camera_frame) return;
     turned = g_camera_frame;
-    // the chosen height, clamped to the three we ship: a corrupt setting still aims somewhere sane
-    uint32_t mode = Opt().aimbot_target < 3 ? Opt().aimbot_target : 0;
+    // the tunables, read once a frame and clamped so a corrupt setting still aims somewhere sane:
+    //   pull:     1% to 100% of the angle to the target, applied this frame
+    //   deadzone: 0.0° to 30.0°, inside which the aimbot does not turn at all
+    //   target_y: 0.45 m (legs) to 1.68 m (head) above the feet
+    float pull = std::clamp(Opt().aimbot_pull, 1u, 100u) * 0.01f;
+    float deadzone = std::clamp(Opt().aimbot_deadzone, 0u, 300u) * 0.1f;
+    uint32_t mode = Opt().aimbot_target < 4 ? Opt().aimbot_target : 0;
     float target_y = kAimHeights[mode];
     auto now = std::chrono::steady_clock::now();
     float best = kCone, yaw = 0, pitch = 0;
@@ -173,9 +181,9 @@ void Aimbot(X86Context& ctx) {
     }
     // already on the target, or nothing within the cone: leave the crosshair to the player so it can be slid
     // onto another enemy without the assist dragging it back
-    if (best < kDeadzone) return;
-    G<float>(c + kControllerYaw) += yaw * kPull;
-    G<float>(c + kControllerPitch) += pitch * kPull;
+    if (best < deadzone) return;
+    G<float>(c + kControllerYaw) += yaw * pull;
+    G<float>(c + kControllerPitch) += pitch * pull;
 }
 
 // D3DVIEWPORT8: x, y, width, height. Called between the 2D layer's begin and end
