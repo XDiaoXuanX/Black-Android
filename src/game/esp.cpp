@@ -40,10 +40,10 @@ constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is t
 // how much of the angle to the target is applied each frame. 1.0 snapped the view onto the enemy and felt
 // glued: nothing the player did could move off it while the target stayed inside the cone. A low fraction is a
 // pull the mouse still wins against, so the crosshair can be slid off one enemy and onto the next.
-constexpr float kPull = 0.15f;       // of the turn to the target, a frame
+constexpr float kPull = 1.0f;       // of the turn to the target, a frame
 // no correction once the crosshair is this close to the target: kills the micro-jitter of a locked view and
 // leaves the last few degrees to the player
-constexpr float kDeadzone = 3.0f;    // degrees
+constexpr float kDeadzone = 1.5f;    // degrees
 constexpr float kDegrees = 180.0f / 3.14159265f;
 // soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
 constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
