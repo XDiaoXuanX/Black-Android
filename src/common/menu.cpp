@@ -114,6 +114,26 @@ const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", 
                                       "INDONESIAN"};  // as game::kLanguages
 // the four aimbot target heights (esp.cpp kAimHeights), picked by aimbot_target
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
+
+// the ESP line colour presets: the same float rgb as esp.cpp kEspPresets, plus the name shown in the row. A
+// preset stepped on writes its colour into esp_red / esp_green / esp_blue and any manual change to those switches
+// back to CUSTOM (esp_color = kEspPresetCount), so the two views always agree.
+struct EspPreset {
+    const char* name;
+    float r, g, b;
+};
+constexpr EspPreset kEspPresets[] = {
+    {"WHITE", 0.88f, 0.86f, 0.82f},
+    {"RED", 1.00f, 0.20f, 0.20f},
+    {"GREEN", 0.20f, 1.00f, 0.30f},
+    {"CYAN", 0.20f, 0.90f, 1.00f},
+    {"YELLOW", 1.00f, 0.85f, 0.20f},
+    {"MAGENTA", 1.00f, 0.30f, 1.00f},
+    {"ORANGE", 1.00f, 0.55f, 0.10f},
+    {"PURPLE", 0.70f, 0.40f, 1.00f},
+};
+constexpr size_t kEspPresetCount = sizeof(kEspPresets) / sizeof(kEspPresets[0]);
+
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -253,8 +273,9 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
-             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget,
+             kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax,
+             kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -334,6 +355,10 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
+    {Kind::Value, kEspColor, "ESP COLOR"},     // WHITE / RED / … / CUSTOM
+    {Kind::Value, kEspRed, "ESP RED"},          // 0 – 255 (custom)
+    {Kind::Value, kEspGreen, "ESP GREEN"},      // 0 – 255 (custom)
+    {Kind::Value, kEspBlue, "ESP BLUE"},        // 0 – 255 (custom)
     {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},
     {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},     // NECK / BODY / LEGS / HEAD
     {Kind::Value, kAimbotPull, "AIMBOT PULL"},         // 1% - 100% (magnet strength)
@@ -532,6 +557,39 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
+        case kEspColor: {
+            // 0..kEspPresetCount-1 a preset, kEspPresetCount CUSTOM. Stepping on a preset writes its rgb into the
+            // three custom fields, so the number and the colour agree; stepping to CUSTOM keeps the fields as they
+            // are, so the player sees whatever they last set and can adjust from there.
+            uint32_t preset = std::clamp(o.esp_color, 0u, uint32_t(kEspPresetCount));
+            if (step) {
+                preset = uint32_t(StepIndex(int(preset), step, int(kEspPresetCount) + 1));
+                o.esp_color = preset;
+                if (preset < kEspPresetCount) {
+                    const EspPreset& p = kEspPresets[preset];
+                    o.esp_red = uint32_t(p.r * 255.0f + 0.5f);
+                    o.esp_green = uint32_t(p.g * 255.0f + 0.5f);
+                    o.esp_blue = uint32_t(p.b * 255.0f + 0.5f);
+                }
+            }
+            std::snprintf(text, sizeof(text), "%s",
+                          preset < kEspPresetCount ? kEspPresets[preset].name : "CUSTOM");
+            return true;
+        }
+        case kEspRed:
+        case kEspGreen:
+        case kEspBlue: {
+            // 0..255 each; stepping switches the preset back to CUSTOM so the two views stay in agreement
+            uint32_t& channel = id == kEspRed ? o.esp_red
+                              : id == kEspGreen ? o.esp_green
+                              : o.esp_blue;
+            if (step) {
+                channel = uint32_t(StepRange(int(channel), 0, 255, 1, step));
+                o.esp_color = uint32_t(kEspPresetCount);
+            }
+            std::snprintf(text, sizeof(text), "%u", channel);
+            return true;
+        }
         case kAimbotTarget:
             // NECK, BODY, LEGS, HEAD: the four heights esp.cpp kAimHeights
             if (step) o.aimbot_target = uint32_t(StepRange(int(o.aimbot_target), 0, 3, 1, step));
@@ -721,6 +779,10 @@ void RestoreDefaults(int page) {
         o.unlock_levels = none.unlock_levels;
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
+        o.esp_color = none.esp_color;
+        o.esp_red = none.esp_red;
+        o.esp_green = none.esp_green;
+        o.esp_blue = none.esp_blue;
         o.aimbot = none.aimbot;
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
@@ -756,6 +818,10 @@ void RestoreDefaults(int page) {
     o.unlock_levels = keep.unlock_levels;
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
+    o.esp_color = keep.esp_color;
+    o.esp_red = keep.esp_red;
+    o.esp_green = keep.esp_green;
+    o.esp_blue = keep.esp_blue;
     o.aimbot = keep.aimbot;
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
