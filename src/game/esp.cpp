@@ -1,6 +1,6 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
-// drawn over the finished frame with the view the scene was drawn with. AIMBOT: the view turns to the neck just
-// under the head of the living enemy nearest the crosshair
+// drawn over the finished frame with the view the scene was drawn with. AIMBOT: the view turns to the point on the
+// living enemy nearest the crosshair chosen by aimbot_target (neck, body or legs)
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -31,10 +31,18 @@ constexpr float kBoxWidth = 0.45f;   // of the box's height
 constexpr float kNear = 0.08f;       // clip w nearer than this is behind the camera
 constexpr float kThickness = 1.5f;   // lines of a 480 frame
 
-// aimbot target height: the neck just under the chin. Between the neck hitbox (≈1.50) and the jaw (≈1.60):
-// lethal like the head but forgiving to the bob of a walking or crouching enemy that would make a 1.65 point
-// float above the skull
-constexpr float kNeckHead = 1.55f;   // above the feet, where the aimbot aims
+// aimbot target heights above the feet, chosen by aimbot_target:
+//   0 NECK: just under the chin. Between the neck hitbox (≈1.50) and the jaw (≈1.60): lethal like the head but
+//     forgiving to the bob of a walking or crouching enemy that would make a 1.65 point float above the skull.
+//   1 BODY: the chest centre. Centre mass, less lethal than the neck but much easier to land while the target
+//     moves — the safe default for the player who wants hits, not just assists.
+//   2 LEGS: the thighs. Slows a sprinting enemy without the two-shot kill, at the cost of the head being far
+//     from the crosshair.
+constexpr float kAimHeights[3] = {
+    1.55f,  // NECK (default)
+    1.15f,  // BODY
+    0.45f,  // LEGS
+};
 
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 // how much of the angle to the target is applied each frame. 1.0 snapped the view onto the enemy and felt
@@ -136,9 +144,9 @@ void EspCamera() {
 }
 
 // esi the player's controller in its look update, before the game clamps the pitch and wraps the yaw. The turn
-// is read off the projection, the angles of the target from the middle of the view. The target is the neck just
-// under the chin (kNeckHead), so the crosshair lands on the same lethal line the game's own head shot registers
-// on, without floating above a crouching enemy. Works zoomed or not: no zoom gate.
+// is read off the projection, the angles of the target from the middle of the view. The target height is picked
+// by aimbot_target — NECK (lethal, default), BODY (centre mass), or LEGS (slows) — so the crosshair lands where
+// the player chose to aim. Works zoomed or not: no zoom gate.
 //
 // The turn is only a fraction of the angle (kPull) and none at all inside kDeadzone, so it assists tracking
 // instead of locking: the player's own look still moves the crosshair off one enemy and onto the next.
@@ -147,14 +155,17 @@ void Aimbot(X86Context& ctx) {
     uint32_t c = ctx.esi;
     if (!Opt().aimbot || !g_camera || !R32(kWorld) || turned == g_camera_frame) return;
     turned = g_camera_frame;
+    // the chosen height, clamped to the three we ship: a corrupt setting still aims somewhere sane
+    uint32_t mode = Opt().aimbot_target < 3 ? Opt().aimbot_target : 0;
+    float target_y = kAimHeights[mode];
     auto now = std::chrono::steady_clock::now();
     float best = kCone, yaw = 0, pitch = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         const float* at = &G<float>(who + kCharPosition);
-        float head[3] = {at[0], at[1] + kNeckHead, at[2]}, clip[4];
-        if (!Clip(head, clip)) continue;
+        float aim[3] = {at[0], at[1] + target_y, at[2]}, clip[4];
+        if (!Clip(aim, clip)) continue;
         float y = -std::atan(clip[0] / clip[3] / g_projection[0]) * kDegrees;
         float p = -std::atan(clip[1] / clip[3] / g_projection[5]) * kDegrees;
         float off = std::sqrt(y * y + p * p);
