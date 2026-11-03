@@ -33,9 +33,12 @@ constexpr float kFullHealth[] = {1200.0f, 750.0f};
 // ---- extra rapid fire: RPG, GRL, Walther 2000 (SNR/SN5) and grenades ---------------------------------
 // The four slow fire weapons keep their fire pacing in their own first person animation, so the regular
 // rapid_fire multiplier never reaches them. The grenade throw has its own recovery animation played after
-// the throw event. With rapid_fire_extra on and rapid_fire at least 8 (the panel's maximum), the in-hand
-// slow fire weapon is kept idle (its kWeaponAnim cleared); with infinite_grenades also on, a throw starts
-// a recovery window during which the animation state is cleared so the next throw goes out immediately.
+// the throw event. With rapid_fire_extra on and rapid_fire at any non-OFF level (2X through 8X), the
+// in-hand slow fire weapon's kWeaponAnim is cleared on a fraction of the frames proportional to the
+// rapid_fire level: at 8X (the panel's maximum) every frame, at 4X every other frame, at 2X every fourth.
+// With infinite_grenades also on, a throw starts a recovery window during which the animation state is
+// cleared at the same proportional rate, so both the slow-fire weapons and the grenade throw end up
+// firing at the same multiplier rapid_fire gives the other guns.
 constexpr uint32_t kWeaponManager = 0x2D12D0;
 constexpr uint32_t kTableCount = 1;      // byte at the table's start
 constexpr uint32_t kTableEntries = 4;    // pointer to the entry array
@@ -56,6 +59,13 @@ constexpr uint32_t kSuppressorBusy = 0x13;
 // to swallow the throw's animation tail without touching a later unrelated animation.
 constexpr int kGrenadeRecoveryFrames = 20;
 std::atomic<int> g_grenade_recovery{0};
+// The panel's RAPID FIRE steps from 1 to 8. kMaxRapidLevel is the counter's reset value, decremented by
+// rapid_fire each frame: at 8 it hits 0 every frame (clear every frame), at 4 every other frame, at 2
+// every fourth. The two counters move together but are kept separate so the slow-fire weapon and the
+// grenade do not steal each other's throttle slot.
+constexpr int kMaxRapidLevel = 8;
+int g_slowfire_counter = kMaxRapidLevel;
+int g_grenade_counter = kMaxRapidLevel;
 
 uint32_t Player() { return R32(kWorld) ? R32(kWorld) + kWorldPlayer : 0; }
 
@@ -124,29 +134,42 @@ bool SlowFireHeld(uint32_t weapon) {
     return kSlowCodes.count(code) != 0;
 }
 
-// Called from the player's update each frame. Two jobs:
-//  1. Slow fire weapons (RPG, GRL, Walther 2000): if rapid_fire_extra is on, rapid_fire is at least 8
-//     (the panel's maximum), and a slow fire weapon is in hand, the weapon's animation field is cleared
-//     each frame so the game accepts the next trigger pull straight away — a rapid fire at frame rate
-//     for those guns.
-//  2. Grenades: if the player just threw (g_grenade_recovery was set by sub_001E8830 below), the
-//     held weapon's animation and the inventory's busy flag are cleared for those frames, letting the
-//     next throw go out immediately. Only when rapid_fire_extra + infinite_grenades are both on.
+// Called from the player's update each frame. Two jobs, both throttled proportionally to rapid_fire:
+//  1. Slow fire weapons (RPG, GRL, Walther 2000): the weapon's animation field is cleared on a fraction
+//     of frames proportional to the rapid_fire level, so the weapon fires at the same multiplier the
+//     regular rapid_fire gives the other guns. Only when a slow fire weapon is in hand and idle.
+//  2. Grenades: after a throw starts a short recovery window, the held weapon's animation and the
+//     inventory's busy flag are cleared at the same proportional rate, so the throw repeats at the
+//     rapid_fire level. Only when rapid_fire_extra + infinite_grenades are both on.
+// A rapid_fire of 1 (OFF) makes this a no-op and resets the throttle counters.
 void ExtraRapidFire() {
     const game::Options& o = game::Opt();
+    if (!o.rapid_fire_extra || o.rapid_fire <= 1) {
+        g_grenade_recovery = 0;
+        g_slowfire_counter = kMaxRapidLevel;
+        g_grenade_counter = kMaxRapidLevel;
+        return;
+    }
     uint32_t me = Player();
     if (!me || R32(me + kCharDying)) {
         g_grenade_recovery = 0;
+        g_slowfire_counter = kMaxRapidLevel;
+        g_grenade_counter = kMaxRapidLevel;
         return;
     }
     uint32_t inv = me + kPlayerInventory;
     if (R32(inv + kInvOwner) != me) {
         g_grenade_recovery = 0;
+        g_slowfire_counter = kMaxRapidLevel;
+        g_grenade_counter = kMaxRapidLevel;
         return;
     }
+    const int step = int(o.rapid_fire);
 
-    // (1) slow fire weapons
-    if (o.rapid_fire_extra && o.rapid_fire >= 8) {
+    // (1) slow fire weapons — throttle by rapid_fire level
+    g_slowfire_counter -= step;
+    if (g_slowfire_counter <= 0) {
+        g_slowfire_counter = kMaxRapidLevel;
         if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
             uint32_t weapon = R32(inv + kInvHeld);
             if (weapon && SlowFireHeld(weapon)) {
@@ -155,21 +178,26 @@ void ExtraRapidFire() {
         }
     }
 
-    // (2) grenade throw recovery
+    // (2) grenade throw recovery — same throttle, separate counter
     int frames = g_grenade_recovery.load(std::memory_order_relaxed);
-    if (frames <= 0) return;
-    if (!o.rapid_fire_extra || !o.infinite_grenades) {
+    if (frames <= 0) {
+        g_grenade_counter = kMaxRapidLevel;
+        return;
+    }
+    if (!o.infinite_grenades) {
         g_grenade_recovery = 0;
+        g_grenade_counter = kMaxRapidLevel;
         return;
     }
     g_grenade_recovery = frames - 1;
-    // the held weapon's animation, cleared so the throw can start again at once (safe: touches only
-    // that weapon's field, not the character's own animation)
-    uint32_t held = R32(inv + kInvHeld);
-    if (held && R32(held + kWeaponAnim)) W32(held + kWeaponAnim, 0);
-    // the inventory's busy flag, cleared unless it is the suppressor's 0x13 (weapons.cpp waits on that)
-    uint32_t busy = R32(inv + kInvBusy);
-    if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
+    g_grenade_counter -= step;
+    if (g_grenade_counter <= 0) {
+        g_grenade_counter = kMaxRapidLevel;
+        uint32_t held = R32(inv + kInvHeld);
+        if (held && R32(held + kWeaponAnim)) W32(held + kWeaponAnim, 0);
+        uint32_t busy = R32(inv + kInvBusy);
+        if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
+    }
 }
 
 }  // namespace
@@ -204,9 +232,9 @@ X86_FUNC(sub_001E74B0) {
 }
 
 // A character's animation event (64-bit hash, then a pointer to the character): the throw takes a grenade
-// (0x1E8934), the cheat puts the player's back. With rapid_fire_extra + infinite_grenades both on, a
-// throw also starts a short recovery window during which the animation state is cleared so the next
-// grenade can be thrown at once.
+// (0x1E8934), the cheat puts the player's back. With rapid_fire_extra on, a throw also starts a short
+// recovery window during which ExtraRapidFire clears the animation state at the rapid_fire's level so
+// the next grenade can be thrown at the same multiplier.
 X86_EXTERN_FUNC(__imp__sub_001E8830);
 X86_FUNC(sub_001E8830) {
     uint32_t who = R32(ctx.esp + 0xC);
