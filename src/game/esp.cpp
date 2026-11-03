@@ -104,7 +104,7 @@ constexpr size_t kSegments = 5;  // the line and the box's four sides
 constexpr size_t kMaxVertices = kMaxEnemies * kSegments * 6;
 
 // the ESP colour as it was last written into `colours`, and the flag that forces a refresh the first time
-// DrawEsp runs: g_colour_dirty is set once so the buffer starts with whatever Opt() has, then cleared.
+// DrawEsp runs: g_colour_dirty is set once so the buffer starts with whatever game::Opt() has, then cleared.
 float g_colour[4] = {0.88f, 0.86f, 0.82f, 1.0f};
 bool g_colour_dirty = true;
 
@@ -126,17 +126,19 @@ void Remember(uint32_t who) {
     *oldest = {who, now};
 }
 
-// fills `out` with the rgba the ESP lines should use: a preset, or the custom rgb divided by 255
+// fills `out` with the rgba the ESP lines should use: a preset, or the custom rgb divided by 255. Lives in the
+// anonymous namespace, so game::Opt() must be spelled out — a bare Opt() would not resolve here.
 void CurrentColour(float out[4]) {
-    uint32_t preset = Opt().esp_color;
+    const game::Options& opts = game::Opt();
+    uint32_t preset = opts.esp_color;
     if (preset < kEspPresetCount) {
         out[0] = kEspPresets[preset].r;
         out[1] = kEspPresets[preset].g;
         out[2] = kEspPresets[preset].b;
     } else {
-        out[0] = float(Opt().esp_red) / 255.0f;
-        out[1] = float(Opt().esp_green) / 255.0f;
-        out[2] = float(Opt().esp_blue) / 255.0f;
+        out[0] = float(opts.esp_red) / 255.0f;
+        out[1] = float(opts.esp_green) / 255.0f;
+        out[2] = float(opts.esp_blue) / 255.0f;
     }
     out[3] = 1.0f;
 }
