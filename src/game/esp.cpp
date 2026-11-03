@@ -1,7 +1,8 @@
 // The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
-// drawn over the finished frame with the view the scene was drawn with. AIMBOT: the view turns to the point on the
-// living enemy nearest the crosshair chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each frame,
-// but never inside aimbot_deadzone
+// drawn over the finished frame with the view the scene was drawn with, in the colour chosen by esp_color (a preset
+// or the esp_red / esp_green / esp_blue custom rgb). AIMBOT: the view turns to the point on the living enemy nearest
+// the crosshair chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each frame, but never inside
+// aimbot_deadzone
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -50,6 +51,24 @@ constexpr float kAimHeights[4] = {
     1.68f,  // HEAD
 };
 
+// the ESP line colours the preset row offers; menu.cpp holds the same list with names (kEspPresets) and must be
+// kept in sync with these — a preset picked there writes its rgb into esp_red / esp_green / esp_blue, and the
+// CUSTOM entry reads them straight (so any drift between the two shows up immediately as a different colour).
+struct EspPreset {
+    float r, g, b;
+};
+constexpr EspPreset kEspPresets[] = {
+    {0.88f, 0.86f, 0.82f},  // WHITE (the soft white the ESP shipped with)
+    {1.00f, 0.20f, 0.20f},  // RED
+    {0.20f, 1.00f, 0.30f},  // GREEN
+    {0.20f, 0.90f, 1.00f},  // CYAN
+    {1.00f, 0.85f, 0.20f},  // YELLOW
+    {1.00f, 0.30f, 1.00f},  // MAGENTA
+    {1.00f, 0.55f, 0.10f},  // ORANGE
+    {0.70f, 0.40f, 1.00f},  // PURPLE
+};
+constexpr size_t kEspPresetCount = sizeof(kEspPresets) / sizeof(kEspPresets[0]);
+
 // aimbot_pull and aimbot_deadzone are read from Opt() every frame:
 //   pull = aimbot_pull / 100 (1% to 100% of the angle to the target, each frame). 15% the default: a gentle
 //     assist the mouse still wins against, so the crosshair can be slid off one enemy and onto the next.
@@ -58,8 +77,6 @@ constexpr float kAimHeights[4] = {
 //     one keeps the crosshair locked on the current target.
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 constexpr float kDegrees = 180.0f / 3.14159265f;
-// soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
-constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
 
 // an enemy is drawn while its update ran this recently: none once the game pauses, no flicker between ticks
 constexpr auto kSeen = std::chrono::milliseconds(250);
@@ -86,6 +103,11 @@ struct Vertex {
 constexpr size_t kSegments = 5;  // the line and the box's four sides
 constexpr size_t kMaxVertices = kMaxEnemies * kSegments * 6;
 
+// the ESP colour as it was last written into `colours`, and the flag that forces a refresh the first time
+// DrawEsp runs: g_colour_dirty is set once so the buffer starts with whatever Opt() has, then cleared.
+float g_colour[4] = {0.88f, 0.86f, 0.82f, 1.0f};
+bool g_colour_dirty = true;
+
 void Remember(uint32_t who) {
     auto now = std::chrono::steady_clock::now();
     for (size_t i = 0; i < g_count; i++)
@@ -102,6 +124,21 @@ void Remember(uint32_t who) {
     for (Seen& s : g_seen)
         if (s.at < oldest->at) oldest = &s;
     *oldest = {who, now};
+}
+
+// fills `out` with the rgba the ESP lines should use: a preset, or the custom rgb divided by 255
+void CurrentColour(float out[4]) {
+    uint32_t preset = Opt().esp_color;
+    if (preset < kEspPresetCount) {
+        out[0] = kEspPresets[preset].r;
+        out[1] = kEspPresets[preset].g;
+        out[2] = kEspPresets[preset].b;
+    } else {
+        out[0] = float(Opt().esp_red) / 255.0f;
+        out[1] = float(Opt().esp_green) / 255.0f;
+        out[2] = float(Opt().esp_blue) / 255.0f;
+    }
+    out[3] = 1.0f;
 }
 
 // clip space; false behind the camera
@@ -192,13 +229,27 @@ void DrawEsp(X86Context& ctx, float unit) {
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
+    // the vertex buffer, its call offset, and the per-vertex colour array: 16 bytes (4 floats) for each of the
+    // kMaxVertices vertices, uninitialised on purpose — the block below fills it the first time DrawEsp runs and
+    // whenever the colour in Opt() changes, so a frame with no change costs nothing
     static const uint32_t buffer = mem::AllocSystem(kMaxVertices * sizeof(Vertex), 16);
     static const uint32_t offset = mem::AllocSystem(8, 16);
-    static const uint32_t colours = [] {
-        uint32_t c = mem::AllocSystem(kMaxVertices * sizeof(kColour), 16);
-        for (size_t i = 0; i < kMaxVertices; i++) std::memcpy(HostPtr(c + i * sizeof(kColour)), kColour, sizeof(kColour));
-        return c;
-    }();
+    static const uint32_t colours = mem::AllocSystem(kMaxVertices * sizeof(float) * 4, 16);
+    // refresh the per-vertex colour whenever the preset or the custom rgb has moved since the last frame. The
+    // comparison is on floats, safe here because they are only ever compared with values that were produced
+    // from uint8 / preset constants — no NaN, no precision drift
+    {
+        float new_colour[4];
+        CurrentColour(new_colour);
+        if (g_colour_dirty ||
+            new_colour[0] != g_colour[0] || new_colour[1] != g_colour[1] ||
+            new_colour[2] != g_colour[2] || new_colour[3] != g_colour[3]) {
+            std::memcpy(g_colour, new_colour, sizeof(g_colour));
+            for (size_t i = 0; i < kMaxVertices; i++)
+                std::memcpy(HostPtr(colours + i * sizeof(g_colour)), g_colour, sizeof(g_colour));
+            g_colour_dirty = false;
+        }
+    }
     Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
     Vertex* v = first;
     float width = kThickness * unit;
