@@ -58,6 +58,14 @@ struct Options {
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
     bool esp = false;  // cheat: a line from the bottom of the screen and a box to each living enemy
+    // cheat: colour of the ESP lines. 0..7 a preset from kEspPresets (WHITE, RED, GREEN, CYAN, YELLOW, MAGENTA,
+    // ORANGE, PURPLE), 8 CUSTOM: the esp_red / esp_green / esp_blue below. Stepping the preset writes its
+    // colour into those three fields, and any manual change of them switches the preset back to CUSTOM, so the
+    // two always agree — the row shows a preset name while the number is one of the eight, CUSTOM otherwise.
+    uint32_t esp_color = 0;
+    uint32_t esp_red = 224;    // 0..255, custom red    (224/255 ≈ 0.88, the soft white the ESP shipped with)
+    uint32_t esp_green = 219;  // 0..255, custom green  (219/255 ≈ 0.86)
+    uint32_t esp_blue = 209;   // 0..255, custom blue   (209/255 ≈ 0.82)
     bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
     // cheat: where the aimbot aims on the enemy. 0 the neck just under the chin (lethal, forgiving to bob),
     // 1 the chest centre (easier to land, less lethal), 2 the legs (slows a sprinting enemy without killing),
