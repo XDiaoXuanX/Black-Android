@@ -33,9 +33,9 @@ constexpr float kFullHealth[] = {1200.0f, 750.0f};
 // ---- extra rapid fire: RPG, GRL, Walther 2000 (SNR/SN5) and grenades ---------------------------------
 // The four slow fire weapons keep their fire pacing in their own first person animation, so the regular
 // rapid_fire multiplier never reaches them. The grenade throw has its own recovery animation played after
-// the throw event. With rapid_fire_extra on and rapid_fire at least 4, the in-hand slow fire weapon is
-// kept idle (its kWeaponAnim cleared); with infinite_grenades also on, a throw starts a recovery window
-// during which the animation state is cleared so the next throw goes out immediately.
+// the throw event. With rapid_fire_extra on and rapid_fire at least 8 (the panel's maximum), the in-hand
+// slow fire weapon is kept idle (its kWeaponAnim cleared); with infinite_grenades also on, a throw starts
+// a recovery window during which the animation state is cleared so the next throw goes out immediately.
 constexpr uint32_t kWeaponManager = 0x2D12D0;
 constexpr uint32_t kTableCount = 1;      // byte at the table's start
 constexpr uint32_t kTableEntries = 4;    // pointer to the entry array
@@ -125,9 +125,10 @@ bool SlowFireHeld(uint32_t weapon) {
 }
 
 // Called from the player's update each frame. Two jobs:
-//  1. Slow fire weapons (RPG, GRL, Walther 2000): if rapid_fire_extra is on, rapid_fire is at least 4,
-//     and a slow fire weapon is in hand, the weapon's animation field is cleared each frame so the
-//     game accepts the next trigger pull straight away — a rapid fire at frame rate for those guns.
+//  1. Slow fire weapons (RPG, GRL, Walther 2000): if rapid_fire_extra is on, rapid_fire is at least 8
+//     (the panel's maximum), and a slow fire weapon is in hand, the weapon's animation field is cleared
+//     each frame so the game accepts the next trigger pull straight away — a rapid fire at frame rate
+//     for those guns.
 //  2. Grenades: if the player just threw (g_grenade_recovery was set by sub_001E8830 below), the
 //     held weapon's animation and the inventory's busy flag are cleared for those frames, letting the
 //     next throw go out immediately. Only when rapid_fire_extra + infinite_grenades are both on.
@@ -145,7 +146,7 @@ void ExtraRapidFire() {
     }
 
     // (1) slow fire weapons
-    if (o.rapid_fire_extra && o.rapid_fire >= 4) {
+    if (o.rapid_fire_extra && o.rapid_fire >= 8) {
         if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
             uint32_t weapon = R32(inv + kInvHeld);
             if (weapon && SlowFireHeld(weapon)) {
