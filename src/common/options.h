@@ -50,6 +50,7 @@ struct Options {
     bool infinite_ammo = false;  // cheat: the player's magazine and reserve never go down
     uint32_t rapid_fire = 1;  // cheat: times the player's rate of fire, 1 the game's
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
+    bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
     uint32_t game_speed = 100;  // cheat: percent of the game's speed, menus and films keep theirs
     bool god_mode = false;  // cheat: no hit takes the player's health
     bool one_hit_kill = false;  // cheat: any hit of the player's bullets kills
