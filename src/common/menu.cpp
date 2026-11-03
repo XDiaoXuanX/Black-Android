@@ -112,6 +112,8 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
+// the three aimbot target heights (esp.cpp kAimHeights), picked by aimbot_target
+const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS"};
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -251,8 +253,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kAimbotTarget, kTouchStick, kDynamicRes, kDynamicTarget,
+             kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -333,6 +335,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
     {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},  // esp.cpp turns the view only at a zoom above 1
+    {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},       // NECK / BODY / LEGS
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -522,10 +525,16 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
         case kRapidFire:
-            // off, then 2 to 4 times the rate
+            // off, then 2 to 8 times the rate
             if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 8, 1, step));
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
+            return true;
+        case kAimbotTarget:
+            // NECK, BODY, LEGS: the three heights esp.cpp kAimHeights
+            if (step) o.aimbot_target = uint32_t(StepRange(int(o.aimbot_target), 0, 2, 1, step));
+            std::snprintf(text, sizeof(text), "%s",
+                          kAimbotTargetNames[std::clamp(o.aimbot_target, 0u, 2u)]);
             return true;
         case kGameSpeed:
             // 25% to 200% in steps of 25
@@ -701,6 +710,7 @@ void RestoreDefaults(int page) {
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
         o.aimbot = none.aimbot;
+        o.aimbot_target = none.aimbot_target;
         Changed();
         return;
     }
@@ -733,6 +743,7 @@ void RestoreDefaults(int page) {
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
     o.aimbot = keep.aimbot;
+    o.aimbot_target = keep.aimbot_target;
     Changed();
 }
 
