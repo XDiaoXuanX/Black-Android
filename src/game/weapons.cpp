@@ -81,11 +81,18 @@ constexpr uint32_t kWeaponMagazine = 0xF4;  // the main fire's magazine, +0xF8 t
 constexpr uint32_t kMagazineData = 8;
 constexpr uint32_t kDataClip = 0x60;
 constexpr uint32_t kDataAmmoType = 0x64;
-// The six hip-fire spread floats that sit right before the clip at +0x60 (standing / crouched / prone, each
-// with a min and a max). Zeroed, every player shot leaves the muzzle dead straight.
-// NOTE: these offsets are tied to kDataClip = 0x60; if the weapon-def layout shifts, adjust here.
-constexpr uint32_t kDataSpreadFirst = 0x48;
-constexpr int      kDataSpreadCount = 6;
+// ---- no bullet spread: force every shot onto exactly the aim line ---------------------------------------------
+// The 8 hip-fire spread floats that sit right before the clip at +0x60. Positions 2..7 are the well-known
+// (standing / crouched / prone) hip spread, each a min and a max. Positions 0..1 are the two floats just before
+// them, commonly "moving spread" or dual-wield spread: they are what still widens a cone while the player walks
+// with a zeroed base spread, so they are included to make "one point" accuracy hold while moving too.
+//
+// RISK: if a weapon stops firing or does no damage after enabling NO BULLET SPREAD, the 0x40/0x44 pair was not
+// spread data after all. In that case, set kDataSpreadFirst back to 0x48 and kDataSpreadCount back to 6 — the
+// safe six-float zeroing is still a big improvement and perfect accuracy is then restored by also enabling
+// NO RECOIL (which prevents the view kicking off the aim line between shots).
+constexpr uint32_t kDataSpreadFirst = 0x40;
+constexpr int      kDataSpreadCount = 8;
 
 // the game's files under D:, the disc image when it runs from one, else the game's folder
 const std::string kDiscRoot = "D:\\";
@@ -139,7 +146,7 @@ std::set<std::string> g_supp_codes;
 std::map<uint32_t, int> g_applied;  // weapon object -> type it was handled as
 uint32_t g_swap_back = 0;           // a weapon to bring back out once the other one is in hand
 
-// no-bullet-spread: the originals of the six spread floats, so turning the option back off restores the weapon
+// no-bullet-spread: the originals of the spread floats, so turning the option back off restores the weapon
 uint32_t g_spread_weapon = 0;
 float    g_spread_orig[kDataSpreadCount] = {};
 
@@ -636,24 +643,31 @@ void Heartbeat() {
 }
 
 // ---- no bullet spread ------------------------------------------------------------------------------------------
-// The six hip-fire spread floats of the weapon def (kDataSpreadFirst..+24) are zeroed while the option is on, so
-// every player shot leaves the muzzle dead straight. The originals are kept so the option can be turned off cleanly,
-// and the previous weapon's values are restored when the player switches.
+// Zero the spread floats of the weapon def so every player shot leaves the muzzle on exactly the aim line.
+// The originals are kept so the option can be turned off cleanly; when the player switches weapons the previous
+// weapon's values are restored and the new weapon's originals saved. The first time a weapon is handled its eight
+// values are logged (one-shot per weapon switch) so a mismatch can be spotted in the log.
 void ApplyNoBulletSpread(uint32_t weapon) {
     if (!weapon) return;
     uint32_t data = R32(weapon + kWeaponData);
     if (!data) return;
     if (weapon != g_spread_weapon) {
-        // first tick on this weapon: restore the previous one, remember the values the game loaded for this one
+        // restore the previous weapon's originals
         if (g_spread_weapon) {
             uint32_t old = R32(g_spread_weapon + kWeaponData);
             if (old)
                 for (int i = 0; i < kDataSpreadCount; i++)
                     G<float>(old + kDataSpreadFirst + i * 4) = g_spread_orig[i];
         }
+        // remember this weapon's originals and log them for diagnostics
         g_spread_weapon = weapon;
-        for (int i = 0; i < kDataSpreadCount; i++)
+        char buf[256];
+        int pos = 0;
+        for (int i = 0; i < kDataSpreadCount && pos < int(sizeof(buf)) - 8; i++) {
             g_spread_orig[i] = G<float>(data + kDataSpreadFirst + i * 4);
+            pos += std::snprintf(buf + pos, sizeof(buf) - pos, "%s%.3f", i ? " " : "", g_spread_orig[i]);
+        }
+        DiagLog("weapons: no-spread saving [%s]", buf);
     }
     for (int i = 0; i < kDataSpreadCount; i++)
         G<float>(data + kDataSpreadFirst + i * 4) = 0.0f;
@@ -698,8 +712,8 @@ void WeaponsTick(X86Context& ctx) {
     if (ReadLevel(l)) {
         AutoSuppressor(l);
         SwapBack(l);
-        // no bullet spread: zero the hip-fire spread floats of the weapon in hand (or put back the originals
-        // when the option is turned off)
+        // no bullet spread: zero the spread floats of the weapon in hand (or put back the originals when the
+        // option is turned off). Combined with NO RECOIL this keeps every shot on exactly the aim line.
         if (game::Opt().no_bullet_spread) {
             uint32_t held = R32(l.inventory + kInvHeld);
             if (held) ApplyNoBulletSpread(held);
