@@ -81,6 +81,11 @@ constexpr uint32_t kWeaponMagazine = 0xF4;  // the main fire's magazine, +0xF8 t
 constexpr uint32_t kMagazineData = 8;
 constexpr uint32_t kDataClip = 0x60;
 constexpr uint32_t kDataAmmoType = 0x64;
+// The six hip-fire spread floats that sit right before the clip at +0x60 (standing / crouched / prone, each
+// with a min and a max). Zeroed, every player shot leaves the muzzle dead straight.
+// NOTE: these offsets are tied to kDataClip = 0x60; if the weapon-def layout shifts, adjust here.
+constexpr uint32_t kDataSpreadFirst = 0x48;
+constexpr int      kDataSpreadCount = 6;
 
 // the game's files under D:, the disc image when it runs from one, else the game's folder
 const std::string kDiscRoot = "D:\\";
@@ -133,6 +138,10 @@ std::atomic<bool> g_auto_suppressor{false};  // the panel offers both versions o
 std::set<std::string> g_supp_codes;
 std::map<uint32_t, int> g_applied;  // weapon object -> type it was handled as
 uint32_t g_swap_back = 0;           // a weapon to bring back out once the other one is in hand
+
+// no-bullet-spread: the originals of the six spread floats, so turning the option back off restores the weapon
+uint32_t g_spread_weapon = 0;
+float    g_spread_orig[kDataSpreadCount] = {};
 
 std::string CodeOf(const std::string& key_name) {
     return key_name.size() > 4 && key_name.compare(0, 4, "BG1_") == 0 ? key_name.substr(4) : key_name;
@@ -626,6 +635,39 @@ void Heartbeat() {
     }
 }
 
+// ---- no bullet spread ------------------------------------------------------------------------------------------
+// The six hip-fire spread floats of the weapon def (kDataSpreadFirst..+24) are zeroed while the option is on, so
+// every player shot leaves the muzzle dead straight. The originals are kept so the option can be turned off cleanly,
+// and the previous weapon's values are restored when the player switches.
+void ApplyNoBulletSpread(uint32_t weapon) {
+    if (!weapon) return;
+    uint32_t data = R32(weapon + kWeaponData);
+    if (!data) return;
+    if (weapon != g_spread_weapon) {
+        // first tick on this weapon: restore the previous one, remember the values the game loaded for this one
+        if (g_spread_weapon) {
+            uint32_t old = R32(g_spread_weapon + kWeaponData);
+            if (old)
+                for (int i = 0; i < kDataSpreadCount; i++)
+                    G<float>(old + kDataSpreadFirst + i * 4) = g_spread_orig[i];
+        }
+        g_spread_weapon = weapon;
+        for (int i = 0; i < kDataSpreadCount; i++)
+            g_spread_orig[i] = G<float>(data + kDataSpreadFirst + i * 4);
+    }
+    for (int i = 0; i < kDataSpreadCount; i++)
+        G<float>(data + kDataSpreadFirst + i * 4) = 0.0f;
+}
+
+void RestoreSpread() {
+    if (!g_spread_weapon) return;
+    uint32_t data = R32(g_spread_weapon + kWeaponData);
+    if (data)
+        for (int i = 0; i < kDataSpreadCount; i++)
+            G<float>(data + kDataSpreadFirst + i * 4) = g_spread_orig[i];
+    g_spread_weapon = 0;
+}
+
 }  // namespace
 
 namespace weapons {
@@ -656,6 +698,15 @@ void WeaponsTick(X86Context& ctx) {
     if (ReadLevel(l)) {
         AutoSuppressor(l);
         SwapBack(l);
+        // no bullet spread: zero the hip-fire spread floats of the weapon in hand (or put back the originals
+        // when the option is turned off)
+        if (game::Opt().no_bullet_spread) {
+            uint32_t held = R32(l.inventory + kInvHeld);
+            if (held) ApplyNoBulletSpread(held);
+            else RestoreSpread();
+        } else {
+            RestoreSpread();
+        }
         // the cheat: a medkit used brings the count back to full on the next tick
         if (game::Opt().infinite_medkits) {
             uint8_t& medkits = G<uint8_t>(l.player + kPlayerMedkits);
@@ -664,6 +715,7 @@ void WeaponsTick(X86Context& ctx) {
     } else {
         g_applied.clear();
         g_swap_back = 0;
+        RestoreSpread();  // level ended: hand the weapon-def back as the game left it
     }
 }
 
