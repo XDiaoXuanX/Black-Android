@@ -270,12 +270,12 @@ void Changed() {
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity,
              kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kAudioOutput, kLanguage,
              kFmvScale, kGyro, kGyroSensitivity, kTouchLayout, kTouchOpacity, kTouchSize, kTouchEdit,
-             kInfiniteAmmo, kRapidFire, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
-             kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
-             kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget,
-             kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax,
-             kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
+             kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
+             kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot,
+             kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
+             kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -349,6 +349,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
     {Kind::Value, kRapidFire, "RAPID FIRE"},
+    {Kind::Value, kRapidFireExtra, "RAPID FIRE EXTRA"},  // RPG/GRL/Walther 2000 + grenade
     {Kind::Value, kNoRecoil, "NO RECOIL"},
     {Kind::Value, kNoBulletSpread, "NO BULLET SPREAD"},
     {Kind::Heading, -1, "PLAYER"},
@@ -440,6 +441,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kInvertMouse: return &o.invert_mouse;
         case kHoldAim: return &o.hold_aim;
         case kInfiniteAmmo: return &o.infinite_ammo;
+        case kRapidFireExtra: return &o.rapid_fire_extra;
         case kNoRecoil: return &o.no_recoil;
         case kNoBulletSpread: return &o.no_bullet_spread;
         case kGodMode: return &o.god_mode;
@@ -772,6 +774,7 @@ void RestoreDefaults(int page) {
         game::Options none;
         o.infinite_ammo = none.infinite_ammo;
         o.rapid_fire = none.rapid_fire;
+        o.rapid_fire_extra = none.rapid_fire_extra;
         o.no_recoil = none.no_recoil;
         o.no_bullet_spread = none.no_bullet_spread;
         o.game_speed = none.game_speed;
@@ -812,6 +815,7 @@ void RestoreDefaults(int page) {
     // the cheats page has its own defaults
     o.infinite_ammo = keep.infinite_ammo;
     o.rapid_fire = keep.rapid_fire;
+    o.rapid_fire_extra = keep.rapid_fire_extra;
     o.no_recoil = keep.no_recoil;
     o.no_bullet_spread = keep.no_bullet_spread;
     o.game_speed = keep.game_speed;
