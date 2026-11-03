@@ -59,6 +59,9 @@ struct Options {
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
     bool esp = false;  // cheat: a line from the bottom of the screen and a box to each living enemy
     bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
+    // cheat: where the aimbot aims on the enemy. 0 the neck just under the chin (lethal, forgiving to bob),
+    // 1 the chest centre (easier to land, less lethal), 2 the legs (slows a sprinting enemy without killing)
+    uint32_t aimbot_target = 0;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
