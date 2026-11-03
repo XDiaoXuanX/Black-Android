@@ -52,8 +52,9 @@ struct Options {
     // cheat: rapid fire also reaches the four slow fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) and,
     // with infinite_grenades also on, the grenade throw. The four weapons keep their pacing in their own first
     // person animation, and the grenade throw in a recovery animation that plays after the throw event; when
-    // this is on and rapid_fire is at least 4, those animations are cleared each frame during the recovery, so
-    // the game accepts the next trigger pull (or throw) straight away — a rapid fire at frame rate.
+    // this is on and rapid_fire is at least 8 (the panel's maximum), those animations are cleared each frame
+    // during the recovery, so the game accepts the next trigger pull (or throw) straight away — a rapid fire
+    // at frame rate.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
