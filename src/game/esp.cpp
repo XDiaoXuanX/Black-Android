@@ -37,7 +37,13 @@ constexpr float kThickness = 1.5f;   // lines of a 480 frame
 constexpr float kNeckHead = 1.55f;   // above the feet, where the aimbot aims
 
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
-constexpr float kPull = 1.0f;        // of the turn to the target, a frame
+// how much of the angle to the target is applied each frame. 1.0 snapped the view onto the enemy and felt
+// glued: nothing the player did could move off it while the target stayed inside the cone. A low fraction is a
+// pull the mouse still wins against, so the crosshair can be slid off one enemy and onto the next.
+constexpr float kPull = 0.15f;       // of the turn to the target, a frame
+// no correction once the crosshair is this close to the target: kills the micro-jitter of a locked view and
+// leaves the last few degrees to the player
+constexpr float kDeadzone = 2.0f;    // degrees
 constexpr float kDegrees = 180.0f / 3.14159265f;
 // soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
 constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
@@ -133,6 +139,9 @@ void EspCamera() {
 // is read off the projection, the angles of the target from the middle of the view. The target is the neck just
 // under the chin (kNeckHead), so the crosshair lands on the same lethal line the game's own head shot registers
 // on, without floating above a crouching enemy. Works zoomed or not: no zoom gate.
+//
+// The turn is only a fraction of the angle (kPull) and none at all inside kDeadzone, so it assists tracking
+// instead of locking: the player's own look still moves the crosshair off one enemy and onto the next.
 void Aimbot(X86Context& ctx) {
     static uint32_t turned;
     uint32_t c = ctx.esi;
@@ -151,6 +160,9 @@ void Aimbot(X86Context& ctx) {
         float off = std::sqrt(y * y + p * p);
         if (off < best) best = off, yaw = y, pitch = p;
     }
+    // already on the target, or nothing within the cone: leave the crosshair to the player so it can be slid
+    // onto another enemy without the assist dragging it back
+    if (best < kDeadzone) return;
     G<float>(c + kControllerYaw) += yaw * kPull;
     G<float>(c + kControllerPitch) += pitch * kPull;
 }
