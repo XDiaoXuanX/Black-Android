@@ -43,7 +43,7 @@ constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is t
 constexpr float kPull = 0.15f;       // of the turn to the target, a frame
 // no correction once the crosshair is this close to the target: kills the micro-jitter of a locked view and
 // leaves the last few degrees to the player
-constexpr float kDeadzone = 2.0f;    // degrees
+constexpr float kDeadzone = 3.0f;    // degrees
 constexpr float kDegrees = 180.0f / 3.14159265f;
 // soft white: bright enough to read on any map, dim enough not to burn on dark backgrounds
 constexpr float kColour[4] = {0.88f, 0.86f, 0.82f, 1.0f};  // rgba
