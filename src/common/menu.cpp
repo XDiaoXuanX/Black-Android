@@ -270,7 +270,7 @@ void Changed() {
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity,
              kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kAudioOutput, kLanguage,
              kFmvScale, kGyro, kGyroSensitivity, kTouchLayout, kTouchOpacity, kTouchSize, kTouchEdit,
-             kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
+             kInfiniteAmmo, kRapidFire, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget,
@@ -350,6 +350,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
     {Kind::Value, kRapidFire, "RAPID FIRE"},
     {Kind::Value, kNoRecoil, "NO RECOIL"},
+    {Kind::Value, kNoBulletSpread, "NO BULLET SPREAD"},
     {Kind::Heading, -1, "PLAYER"},
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
@@ -440,6 +441,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kHoldAim: return &o.hold_aim;
         case kInfiniteAmmo: return &o.infinite_ammo;
         case kNoRecoil: return &o.no_recoil;
+        case kNoBulletSpread: return &o.no_bullet_spread;
         case kGodMode: return &o.god_mode;
         case kInfiniteMedkits: return &o.infinite_medkits;
         case kOneHitKill: return &o.one_hit_kill;
@@ -771,6 +773,7 @@ void RestoreDefaults(int page) {
         o.infinite_ammo = none.infinite_ammo;
         o.rapid_fire = none.rapid_fire;
         o.no_recoil = none.no_recoil;
+        o.no_bullet_spread = none.no_bullet_spread;
         o.game_speed = none.game_speed;
         o.god_mode = none.god_mode;
         o.infinite_medkits = none.infinite_medkits;
@@ -810,6 +813,7 @@ void RestoreDefaults(int page) {
     o.infinite_ammo = keep.infinite_ammo;
     o.rapid_fire = keep.rapid_fire;
     o.no_recoil = keep.no_recoil;
+    o.no_bullet_spread = keep.no_bullet_spread;
     o.game_speed = keep.game_speed;
     o.god_mode = keep.god_mode;
     o.infinite_medkits = keep.infinite_medkits;
