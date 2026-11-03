@@ -112,8 +112,8 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
-// the three aimbot target heights (esp.cpp kAimHeights), picked by aimbot_target
-const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS"};
+// the four aimbot target heights (esp.cpp kAimHeights), picked by aimbot_target
+const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -253,8 +253,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kNoRecoil, kGameSpeed, kGodMode, kOneHitKill, kInfiniteGrenades,
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
-             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kAimbotTarget, kTouchStick, kDynamicRes, kDynamicTarget,
-             kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
+             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -334,8 +334,10 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
-    {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},  // esp.cpp turns the view only at a zoom above 1
-    {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},       // NECK / BODY / LEGS
+    {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},
+    {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},     // NECK / BODY / LEGS / HEAD
+    {Kind::Value, kAimbotPull, "AIMBOT PULL"},         // 1% - 100% (magnet strength)
+    {Kind::Value, kAimbotDeadzone, "AIMBOT DEADZONE"}, // 0.0° - 30.0° (lock-off range, A->B slide)
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -531,10 +533,20 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
         case kAimbotTarget:
-            // NECK, BODY, LEGS: the three heights esp.cpp kAimHeights
-            if (step) o.aimbot_target = uint32_t(StepRange(int(o.aimbot_target), 0, 2, 1, step));
+            // NECK, BODY, LEGS, HEAD: the four heights esp.cpp kAimHeights
+            if (step) o.aimbot_target = uint32_t(StepRange(int(o.aimbot_target), 0, 3, 1, step));
             std::snprintf(text, sizeof(text), "%s",
-                          kAimbotTargetNames[std::clamp(o.aimbot_target, 0u, 2u)]);
+                          kAimbotTargetNames[std::clamp(o.aimbot_target, 0u, 3u)]);
+            return true;
+        case kAimbotPull:
+            // 1% to 100%: the fraction of the angle to the target applied each frame (magnet strength)
+            if (step) o.aimbot_pull = uint32_t(StepRange(int(o.aimbot_pull), 1, 100, 1, step));
+            std::snprintf(text, sizeof(text), "%u%%", o.aimbot_pull);
+            return true;
+        case kAimbotDeadzone:
+            // 0.0° to 30.0°, stored in tenths of a degree: inside it the aimbot does not turn
+            if (step) o.aimbot_deadzone = uint32_t(StepRange(int(o.aimbot_deadzone), 0, 300, 1, step));
+            std::snprintf(text, sizeof(text), "%.1f", o.aimbot_deadzone / 10.0f);
             return true;
         case kGameSpeed:
             // 25% to 200% in steps of 25
@@ -711,6 +723,8 @@ void RestoreDefaults(int page) {
         o.esp = none.esp;
         o.aimbot = none.aimbot;
         o.aimbot_target = none.aimbot_target;
+        o.aimbot_pull = none.aimbot_pull;
+        o.aimbot_deadzone = none.aimbot_deadzone;
         Changed();
         return;
     }
@@ -744,6 +758,8 @@ void RestoreDefaults(int page) {
     o.esp = keep.esp;
     o.aimbot = keep.aimbot;
     o.aimbot_target = keep.aimbot_target;
+    o.aimbot_pull = keep.aimbot_pull;
+    o.aimbot_deadzone = keep.aimbot_deadzone;
     Changed();
 }
 
