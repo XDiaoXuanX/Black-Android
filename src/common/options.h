@@ -60,8 +60,15 @@ struct Options {
     bool esp = false;  // cheat: a line from the bottom of the screen and a box to each living enemy
     bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
     // cheat: where the aimbot aims on the enemy. 0 the neck just under the chin (lethal, forgiving to bob),
-    // 1 the chest centre (easier to land, less lethal), 2 the legs (slows a sprinting enemy without killing)
+    // 1 the chest centre (easier to land, less lethal), 2 the legs (slows a sprinting enemy without killing),
+    // 3 the head (the headshot line, most lethal, most sensitive to the bob of a walking or crouching enemy)
     uint32_t aimbot_target = 0;
+    // cheat: how strongly the aimbot pulls, percent of the angle to the target applied each frame. 15 the
+    // default (a gentle assist the mouse still wins against), 100 a hard snap, 1 a barely-felt tug.
+    uint32_t aimbot_pull = 15;
+    // cheat: tenths of a degree inside which the aimbot does not turn. Larger leaves the crosshair freer so it
+    // can be slid off one enemy onto the next; smaller keeps it locked on the current one. 15 = 1.5 degrees.
+    uint32_t aimbot_deadzone = 15;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
