@@ -249,6 +249,27 @@ static void OnGun(uint32_t at, bool point) {
     for (int i = 0; i < 3; i++) v[i] += (g_gun - 1) * (d[i] - forward[i] * depth);
 }
 
+// --- viewmodel & shell casing shift ---------------------------------------
+
+// The viewmodel's own translation, computed at the game's own 70 degrees. On the viewmodel setting it must sit
+// where the wider picture puts the gun: same direction from the eye, same depth, hands and arms stay attached.
+// The game reads the translated vector through edx.
+void ViewmodelShift(X86Context& ctx, uint8_t*) {
+    if (g_gun == 1 || !ctx.edx) return;
+    OnGun(ctx.edx, true);
+}
+
+// A shell casing spawns at the ejection port on the game's own picture. The port moved with the gun when the
+// viewmodel setting was applied, so the casing is spawned at the shifted point instead: it leaves the gun, not
+// the empty air where the port used to be.
+// The game passes the spawn point through eax.
+void ShellShift(X86Context& ctx, uint8_t*) {
+    if (g_gun == 1 || !ctx.eax) return;
+    OnGun(ctx.eax, true);
+}
+
+// --- locator / effect shift -----------------------------------------------
+
 constexpr uint32_t kMatrixPosition = 48;  // the last of a matrix's four rows
 
 // A locator's matrix moved onto the gun's picture, as a copy: the game's own stays where bullets start
