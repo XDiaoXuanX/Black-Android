@@ -126,9 +126,9 @@ jobs:
       # `ndk.abiFilters` that overlaps with the split list, throwing:
       #   "Conflicting configuration : '<abi>' in ndk abiFilters cannot be
       #    present when splits abi filters are set : armeabi-v7a,arm64-v8a"
-      # The block below therefore first calls `abiFilters.clear()` (removes
-      # every existing entry: single-line, multi-line, addAll, +=) and only
-      # then enables splits. Gradle merges multiple `android { }` blocks, so
+      # The block below first calls `abiFilters.clear()` (removes every
+      # existing entry: single-line, multi-line, addAll, +=) and only then
+      # enables splits. Gradle merges multiple `android { }` blocks, so
       # appending this block at EOF is safe even if the file already has its
       # own `android` / `defaultConfig` block.
       # ═══════════════════════════════════════════════════════════════════
@@ -152,20 +152,64 @@ jobs:
             block=$'\n// CI: ABI splits (arm64-v8a + armeabi-v7a)\n// ndk.abiFilters cleared to avoid conflict with splits.abi\nandroid {\n    defaultConfig {\n        ndk {\n            abiFilters.clear()\n        }\n    }\n    splits {\n        abi {\n            enable true\n            reset()\n            include "armeabi-v7a", "arm64-v8a"\n            universalApk false\n        }\n    }\n}\n'
           fi
 
-          # Idempotent: drop any previously injected CI block (from older runs)
-          # by truncating from the "// CI: ABI splits" marker line to EOF.
+          # Idempotent: drop any previously injected CI block.
           if grep -q 'CI: ABI splits' "$gradle_file"; then
             marker_line=$(grep -n 'CI: ABI splits' "$gradle_file" | head -n1 | cut -d: -f1)
             awk -v start="$marker_line" 'NR < start { print }' "$gradle_file" > "${gradle_file}.tmp"
             mv "${gradle_file}.tmp" "$gradle_file"
-            echo "Removed previous CI block; rewriting with current version."
+            echo "Removed previous ABI-split block; rewriting with current version."
           fi
 
           printf '%s\n' "$block" >> "$gradle_file"
           echo "ABI splits appended (and ndk.abiFilters cleared)."
-
           echo "---- tail of $gradle_file ----"
           tail -n 30 "$gradle_file"
+
+      # ═══════════════════════════════════════════════════════════════════
+      # NATIVE BUILD CONFIG — fixes the armeabi-v7a ninja failure
+      #
+      # Root cause: glslang's HLSL/hlslParseHelper.cpp (~330 KB TU) is
+      # killed by the OOM killer when compiled for 32-bit ARM alongside
+      # other large TUs (GlslangToSpv.cpp, SpvBuilder.cpp). The symptom is
+      # `ninja: build stopped: subcommand failed` with no visible error.
+      #
+      # Fixes applied via CMake arguments:
+      #   -DENABLE_HLSL=OFF      -> skips hlslParseHelper.cpp entirely
+      #   -DBUILD_TESTING=OFF    -> skips test TUs
+      #   -DGLSLANG_TESTS=OFF    -> skips glslang test TUs
+      # ═══════════════════════════════════════════════════════════════════
+      - name: Configure native build (disable HLSL, reduce memory footprint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle_file=""
+          for f in app/build.gradle.kts app/build.gradle; do
+            if [ -f "$f" ]; then gradle_file="$f"; break; fi
+          done
+          if [ -z "$gradle_file" ]; then
+            echo "::error::app/build.gradle or app/build.gradle.kts not found"
+            exit 1
+          fi
+          echo "Patch file: $gradle_file"
+
+          if [[ "$gradle_file" == *.kts ]]; then
+            block=$'\n// CI: native CMake flags\n// Disable HLSL (skips hlslParseHelper.cpp — OOM-killed on 32-bit ARM)\n// and skip glslang tests to reduce build size and peak memory.\nandroid {\n    defaultConfig {\n        externalNativeBuild {\n            cmake {\n                arguments.addAll(listOf("-DENABLE_HLSL=OFF", "-DBUILD_TESTING=OFF", "-DGLSLANG_TESTS=OFF"))\n            }\n        }\n    }\n}\n'
+          else
+            block=$'\n// CI: native CMake flags\n// Disable HLSL (skips hlslParseHelper.cpp — OOM-killed on 32-bit ARM)\n// and skip glslang tests to reduce build size and peak memory.\nandroid {\n    defaultConfig {\n        externalNativeBuild {\n            cmake {\n                arguments.addAll(["-DENABLE_HLSL=OFF", "-DBUILD_TESTING=OFF", "-DGLSLANG_TESTS=OFF"])\n            }\n        }\n    }\n}\n'
+          fi
+
+          # Idempotent: drop any previously injected CI block.
+          if grep -q 'CI: native CMake flags' "$gradle_file"; then
+            marker_line=$(grep -n 'CI: native CMake flags' "$gradle_file" | head -n1 | cut -d: -f1)
+            awk -v start="$marker_line" 'NR < start { print }' "$gradle_file" > "${gradle_file}.tmp"
+            mv "${gradle_file}.tmp" "$gradle_file"
+            echo "Removed previous native-config block; rewriting with current version."
+          fi
+
+          printf '%s\n' "$block" >> "$gradle_file"
+          echo "Native CMake flags appended."
+          echo "---- tail of $gradle_file ----"
+          tail -n 25 "$gradle_file"
 
       - uses: actions/setup-java@v5
         with:
@@ -298,7 +342,6 @@ jobs:
           fi
 
           # 2) Delete the git tag (local & remote) - only for manual builds.
-          #    For push-tag events, the tag is the build target -> skip.
           if [ "$EVENT_NAME" != "push" ]; then
             if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
               echo "Remote tag $TAG found -> deleting"
@@ -397,8 +440,12 @@ jobs:
           echo [4/5] Android project
           if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
 
-          echo [5/5] APK (ABI split)
-          call gradlew.bat assembleRelease %GRADLE_ARGS%
+          :: ─── FIX: clean + cap parallel workers + verbose native output ───
+          :: clean   : remove any cached 64-bit objects before the 32-bit build
+          :: workers : 2 caps peak RAM;  drop to 1 if armeabi-v7a still OOMs
+          :: verbose : prints the real clang diagnostic if it fails again
+          echo [5/5] APK (ABI split, capped parallelism)
+          call gradlew.bat clean assembleRelease %GRADLE_ARGS% --max-workers=2 -Pandroid.native.buildOutput=verbose
           if errorlevel 1 (
               echo ERROR: Gradle assembleRelease failed
               exit /b 1
@@ -533,6 +580,7 @@ jobs:
             echo "- Source: $SOURCE at \`$commit\`"
             echo "- Tag: \`$TAG\`"
             echo "- ABI: \`arm64-v8a\` + \`armeabi-v7a\` (split, universalApk=false)"
+            echo "- Native: HLSL disabled in glslang (fixes 32-bit ARM OOM)"
             echo
             echo "### APKs"
             echo
