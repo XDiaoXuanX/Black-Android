@@ -271,11 +271,11 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kAudioOutput, kLanguage,
              kFmvScale, kGyro, kGyroSensitivity, kTouchLayout, kTouchOpacity, kTouchSize, kTouchEdit,
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
-             kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
-             kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot,
-             kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kInfiniteGrenades, kFlyMode, kFlySpeed, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone,
+             kLeftSensitivity, kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels,
+             kUnlockBlackOps, kTouchSkin, kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed,
+             kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes,
+             kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -356,6 +356,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
+    {Kind::Value, kFlyMode, "FLY MODE"},
+    {Kind::Value, kFlySpeed, "FLY SPEED"},
     {Kind::Value, kEsp, "ESP LINES"},
     {Kind::Value, kEspColor, "ESP COLOR"},     // WHITE / RED / … / CUSTOM
     {Kind::Value, kEspRed, "ESP RED"},          // 0 – 255 (custom)
@@ -448,6 +450,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kInfiniteMedkits: return &o.infinite_medkits;
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
+        case kFlyMode: return &o.fly_mode;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kEsp: return &o.esp;
@@ -614,6 +617,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             // 25% to 200% in steps of 25
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
+            return true;
+        case kFlySpeed:
+            // 25% to 500% in steps of 25
+            if (step) o.fly_speed = uint32_t(StepRange(int(o.fly_speed), 25, 500, 25, step));
+            std::snprintf(text, sizeof(text), "%u%%", o.fly_speed);
             return true;
         default:
             return false;
@@ -782,6 +790,8 @@ void RestoreDefaults(int page) {
         o.infinite_medkits = none.infinite_medkits;
         o.one_hit_kill = none.one_hit_kill;
         o.infinite_grenades = none.infinite_grenades;
+        o.fly_mode = none.fly_mode;
+        o.fly_speed = none.fly_speed;
         o.unlock_levels = none.unlock_levels;
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
@@ -823,6 +833,8 @@ void RestoreDefaults(int page) {
     o.infinite_medkits = keep.infinite_medkits;
     o.one_hit_kill = keep.one_hit_kill;
     o.infinite_grenades = keep.infinite_grenades;
+    o.fly_mode = keep.fly_mode;
+    o.fly_speed = keep.fly_speed;
     o.unlock_levels = keep.unlock_levels;
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
