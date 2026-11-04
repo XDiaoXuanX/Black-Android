@@ -2,14 +2,11 @@
 #
 # Runs:
 #  - v* tag: builds and publishes a release on the pushed tag.
-#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input; the APK is published
-#    to a new GitHub release (tag `v<version>`, default version `preview-<run>`) created on the built commit.
-#    It still needs the secrets below: the recompiler cannot run without the decrypted default.xbe.
-#  - pull request: not run here. Use the UI Preview workflow to test the interface from a branch.
-#
-# If a tag/release with the same name already exists, the old one is deleted and replaced with the new build.
-#
-# Secrets: XBE_KEY, KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
+#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit
+#    in the `ref` input; the APK is published to a new GitHub release
+#    (tag `v<version>`, default `preview-<run>`) created on the built commit.
+#    Requires the secrets below: the recompiler cannot run without the
+#    decrypted default.xbe.
 #
 # Output: ABI-split APKs (arm64-v8a + armeabi-v7a), two files per release.
 name: Build Black Android ( Plus++ )
@@ -118,19 +115,8 @@ jobs:
           grep -n "minSdk" "$gradle_file"
 
       # ═══════════════════════════════════════════════════════════════════
-      # ABI SPLITS (enabled) — produces two separate APKs:
-      #   arm64-v8a   (64-bit)
-      #   armeabi-v7a (32-bit)
-      #
-      # IMPORTANT: when `splits.abi` is enabled, AGP rejects any entry in
-      # `ndk.abiFilters` that overlaps with the split list, throwing:
-      #   "Conflicting configuration : '<abi>' in ndk abiFilters cannot be
-      #    present when splits abi filters are set : armeabi-v7a,arm64-v8a"
-      # The block below first calls `abiFilters.clear()` (removes every
-      # existing entry: single-line, multi-line, addAll, +=) and only then
-      # enables splits. Gradle merges multiple `android { }` blocks, so
-      # appending this block at EOF is safe even if the file already has its
-      # own `android` / `defaultConfig` block.
+      # ABI SPLITS (enabled) — two separate APKs.
+      # ndk.abiFilters cleared first to avoid AGP conflict.
       # ═══════════════════════════════════════════════════════════════════
       - name: Enable ABI splits (32-bit + 64-bit)
         shell: bash
@@ -152,7 +138,6 @@ jobs:
             block=$'\n// CI: ABI splits (arm64-v8a + armeabi-v7a)\n// ndk.abiFilters cleared to avoid conflict with splits.abi\nandroid {\n    defaultConfig {\n        ndk {\n            abiFilters.clear()\n        }\n    }\n    splits {\n        abi {\n            enable true\n            reset()\n            include "armeabi-v7a", "arm64-v8a"\n            universalApk false\n        }\n    }\n}\n'
           fi
 
-          # Idempotent: drop any previously injected CI block.
           if grep -q 'CI: ABI splits' "$gradle_file"; then
             marker_line=$(grep -n 'CI: ABI splits' "$gradle_file" | head -n1 | cut -d: -f1)
             awk -v start="$marker_line" 'NR < start { print }' "$gradle_file" > "${gradle_file}.tmp"
@@ -162,23 +147,13 @@ jobs:
 
           printf '%s\n' "$block" >> "$gradle_file"
           echo "ABI splits appended (and ndk.abiFilters cleared)."
-          echo "---- tail of $gradle_file ----"
-          tail -n 30 "$gradle_file"
 
       # ═══════════════════════════════════════════════════════════════════
-      # NATIVE BUILD CONFIG — fixes the armeabi-v7a ninja failure
-      #
-      # Root cause: glslang's HLSL/hlslParseHelper.cpp (~330 KB TU) is
-      # killed by the OOM killer when compiled for 32-bit ARM alongside
-      # other large TUs (GlslangToSpv.cpp, SpvBuilder.cpp). The symptom is
-      # `ninja: build stopped: subcommand failed` with no visible error.
-      #
-      # Fixes applied via CMake arguments:
-      #   -DENABLE_HLSL=OFF      -> skips hlslParseHelper.cpp entirely
-      #   -DBUILD_TESTING=OFF    -> skips test TUs
-      #   -DGLSLANG_TESTS=OFF    -> skips glslang test TUs
+      # NATIVE FIXES — disable HLSL + suppress strict-aliasing errors.
+      # These are passed as CMake arguments from Gradle so they apply
+      # to the glslang FetchContent sub-build as well.
       # ═══════════════════════════════════════════════════════════════════
-      - name: Configure native build (disable HLSL, reduce memory footprint)
+      - name: Configure native build (HLSL off, strict-aliasing suppressed)
         shell: bash
         run: |
           set -euo pipefail
@@ -193,12 +168,11 @@ jobs:
           echo "Patch file: $gradle_file"
 
           if [[ "$gradle_file" == *.kts ]]; then
-            block=$'\n// CI: native CMake flags\n// Disable HLSL (skips hlslParseHelper.cpp — OOM-killed on 32-bit ARM)\n// and skip glslang tests to reduce build size and peak memory.\nandroid {\n    defaultConfig {\n        externalNativeBuild {\n            cmake {\n                arguments.addAll(listOf("-DENABLE_HLSL=OFF", "-DBUILD_TESTING=OFF", "-DGLSLANG_TESTS=OFF"))\n            }\n        }\n    }\n}\n'
+            block=$'\n// CI: native CMake flags\n// HLSL disabled (skips hlslParseHelper.cpp — OOM on 32-bit ARM)\n// strict-aliasing errors suppressed (GlslangToSpv.cpp on ARM)\nandroid {\n    defaultConfig {\n        externalNativeBuild {\n            cmake {\n                arguments.addAll(listOf(\n                    "-DENABLE_HLSL=OFF",\n                    "-DBUILD_TESTING=OFF",\n                    "-DGLSLANG_TESTS=OFF"\n                ))\n                cppFlags.add("-Wno-error=strict-aliasing")\n            }\n        }\n    }\n}\n'
           else
-            block=$'\n// CI: native CMake flags\n// Disable HLSL (skips hlslParseHelper.cpp — OOM-killed on 32-bit ARM)\n// and skip glslang tests to reduce build size and peak memory.\nandroid {\n    defaultConfig {\n        externalNativeBuild {\n            cmake {\n                arguments.addAll(["-DENABLE_HLSL=OFF", "-DBUILD_TESTING=OFF", "-DGLSLANG_TESTS=OFF"])\n            }\n        }\n    }\n}\n'
+            block=$'\n// CI: native CMake flags\n// HLSL disabled (skips hlslParseHelper.cpp — OOM on 32-bit ARM)\n// strict-aliasing errors suppressed (GlslangToSpv.cpp on ARM)\nandroid {\n    defaultConfig {\n        externalNativeBuild {\n            cmake {\n                arguments.addAll([\n                    "-DENABLE_HLSL=OFF",\n                    "-DBUILD_TESTING=OFF",\n                    "-DGLSLANG_TESTS=OFF"\n                ])\n                cppFlags.add("-Wno-error=strict-aliasing")\n            }\n        }\n    }\n}\n'
           fi
 
-          # Idempotent: drop any previously injected CI block.
           if grep -q 'CI: native CMake flags' "$gradle_file"; then
             marker_line=$(grep -n 'CI: native CMake flags' "$gradle_file" | head -n1 | cut -d: -f1)
             awk -v start="$marker_line" 'NR < start { print }' "$gradle_file" > "${gradle_file}.tmp"
@@ -208,8 +182,6 @@ jobs:
 
           printf '%s\n' "$block" >> "$gradle_file"
           echo "Native CMake flags appended."
-          echo "---- tail of $gradle_file ----"
-          tail -n 25 "$gradle_file"
 
       - uses: actions/setup-java@v5
         with:
@@ -326,22 +298,16 @@ jobs:
         run: |
           set -uo pipefail
           echo "Checking for existing tag/release: $TAG"
-
-          # 1) Delete the old GitHub release (if any) so it can be recreated.
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Release $TAG found -> deleting"
             if [ "$EVENT_NAME" = "push" ]; then
-              # Triggered by push tag: keep the tag, delete only the release.
               gh release delete "$TAG" --repo "$REPO" --yes || true
             else
-              # Manual build: delete release AND tag together.
               gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag || true
             fi
           else
             echo "No existing release: $TAG"
           fi
-
-          # 2) Delete the git tag (local & remote) - only for manual builds.
           if [ "$EVENT_NAME" != "push" ]; then
             if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
               echo "Remote tag $TAG found -> deleting"
@@ -356,7 +322,6 @@ jobs:
           else
             echo "Triggered by push tag -> skipping tag deletion"
           fi
-
           echo "Cleanup done."
 
       - name: Build
@@ -440,11 +405,8 @@ jobs:
           echo [4/5] Android project
           if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
 
-          :: ─── FIX: clean + cap parallel workers + verbose native output ───
-          :: clean   : remove any cached 64-bit objects before the 32-bit build
-          :: workers : 2 caps peak RAM;  drop to 1 if armeabi-v7a still OOMs
-          :: verbose : prints the real clang diagnostic if it fails again
-          echo [5/5] APK (ABI split, capped parallelism)
+          :: ─── Clean + capped parallelism + verbose native output ───
+          echo [5/5] APK (ABI split, HLSL off, strict-aliasing suppressed)
           call gradlew.bat clean assembleRelease %GRADLE_ARGS% --max-workers=2 -Pandroid.native.buildOutput=verbose
           if errorlevel 1 (
               echo ERROR: Gradle assembleRelease failed
@@ -454,9 +416,6 @@ jobs:
           echo Split APK output:
           dir /b app\build\outputs\apk\release\*.apk
 
-      # ═══════════════════════════════════════════════════════════════════
-      # Rename both split APKs (Gradle emits one per ABI).
-      # ═══════════════════════════════════════════════════════════════════
       - name: Name the split APKs
         shell: bash
         env:
@@ -477,10 +436,6 @@ jobs:
           mv "$apk32" "Black-${ARTIFACT}-armeabi-v7a.apk"
           ls -la Black-*.apk
 
-      # ═══════════════════════════════════════════════════════════════════
-      # Verify each split APK contains ONLY its own ABI (i.e. is not
-      # accidentally universal) and does contain its expected native libs.
-      # ═══════════════════════════════════════════════════════════════════
       - name: Verify ABI splits
         shell: bash
         env:
@@ -512,9 +467,6 @@ jobs:
             echo "OK: $apk is a clean $abi-only split"
           done
 
-      # ═══════════════════════════════════════════════════════════════════
-      # Sign & verify BOTH split APKs with the release keystore.
-      # ═══════════════════════════════════════════════════════════════════
       - name: Sign & verify release APKs
         shell: cmd
         run: |
@@ -580,7 +532,7 @@ jobs:
             echo "- Source: $SOURCE at \`$commit\`"
             echo "- Tag: \`$TAG\`"
             echo "- ABI: \`arm64-v8a\` + \`armeabi-v7a\` (split, universalApk=false)"
-            echo "- Native: HLSL disabled in glslang (fixes 32-bit ARM OOM)"
+            echo "- Native: HLSL off, strict-aliasing suppressed, capped parallelism"
             echo
             echo "### APKs"
             echo
@@ -597,10 +549,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ═══════════════════════════════════════════════════════════════════
-      # Release notes: fill the template with the arm64 APK as the primary
-      # entry, then append the ABI-split table for both files.
-      # ═══════════════════════════════════════════════════════════════════
       - name: Release notes
         shell: bash
         env:
