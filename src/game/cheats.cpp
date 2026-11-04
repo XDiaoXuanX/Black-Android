@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <set>
 #include <string>
 
@@ -31,20 +32,26 @@ constexpr uint32_t kDifficulty = 0x2014C;  // in the game object, 0 easy to 3 bl
 constexpr float kFullHealth[] = {1200.0f, 750.0f};
 
 // ---- extra rapid fire: RPG, GRL, Walther 2000 (SNR/SN5) and grenades ---------------------------------
-// The four slow fire weapons keep their fire pacing in their own first person animation, so the regular
-// rapid_fire multiplier never reaches them. The grenade throw has its own recovery animation played after
-// the throw event. With rapid_fire_extra on and rapid_fire at any non-OFF level (2X through 8X), the
-// in-hand slow fire weapon's kWeaponAnim is cleared on a fraction of the frames proportional to the
-// rapid_fire level: at 8X (the panel's maximum) every frame, at 4X every other frame, at 2X every fourth.
-// With infinite_grenades also on, a throw starts a recovery window during which the animation state is
-// cleared at the same proportional rate, so both the slow-fire weapons and the grenade throw end up
-// firing at the same multiplier rapid_fire gives the other guns.
+// The four slow fire weapons keep their fire pacing in their own first person animation AND are single
+// shot by design (the trigger is edge-triggered for them), so the regular rapid_fire multiplier never
+// reaches them. To make them fire continuously while the trigger is held — like the AK-47 — we do two
+// things when rapid_fire_extra is on and rapid_fire is any non-OFF level (2X through 8X):
+//
+//   1. Set the weapon's fire mode to "auto" (1), so a held trigger keeps firing without needing the
+//      player to release and re-press it.
+//   2. Clear the weapon's kWeaponAnim on a fraction of the frames proportional to rapid_fire, so the
+//      game accepts the next shot every 8/rapid_fire frames (at 8X every frame, at 2X every fourth).
+//
+// The grenade throw is similar: with infinite_grenades also on, a throw starts a recovery window during
+// which the animation state is cleared at the same proportional rate, so the throw repeats at the
+// rapid_fire level.
 constexpr uint32_t kWeaponManager = 0x2D12D0;
 constexpr uint32_t kTableCount = 1;      // byte at the table's start
 constexpr uint32_t kTableEntries = 4;    // pointer to the entry array
 constexpr uint32_t kEntrySize = 0x20;    // name key (8 bytes), weapon data, ...
 constexpr uint32_t kWeaponType = 0;      // byte: index in the table
 constexpr uint32_t kWeaponAnim = 0xD8;   // the first person animation id, 0 when idle
+constexpr uint32_t kWeaponData = 0xEC;   // pointer to the weapon's data block
 constexpr uint32_t kPlayerInventory = 0x278;
 constexpr uint32_t kInvOwner = 0x1C;
 constexpr uint32_t kInvHeld = 0x24;      // the weapon in hand
@@ -55,6 +62,16 @@ constexpr uint32_t kInvRequest = 0x38;   // 2 asks to switch to the other slot, 
 // the suppressor's, which weapons.cpp waits on).
 constexpr uint32_t kInvBusy = 0xB4;
 constexpr uint32_t kSuppressorBusy = 0x13;
+
+// Fire-mode byte: where in the weapon's data block the single-shot / full-auto flag lives. 0 = single
+// shot, 1 = full auto. This offset is a guess based on comparing the RPG's data block to the AK-47's;
+// if the weapon still needs per-shot trigger pulls with rapid_fire_extra on, this offset is wrong — try
+// +0x14, +0x1C, or +0x20 next, and check the "weapons: auto-fire on weapon" log line to confirm the
+// change took effect. Restored to its original value when the option goes off or the weapon leaves hand.
+constexpr uint32_t kDataFireMode = 0x18;
+uint32_t g_auto_fire_weapon = 0;      // the weapon we converted to auto-fire, 0 when none
+uint8_t  g_auto_fire_original = 0;    // its fire-mode byte before we changed it
+
 // frames the throw recovery is kept cleared. 20 frames is about a third of a second at 60 fps — enough
 // to swallow the throw's animation tail without touching a later unrelated animation.
 constexpr int kGrenadeRecoveryFrames = 20;
@@ -134,17 +151,50 @@ bool SlowFireHeld(uint32_t weapon) {
     return kSlowCodes.count(code) != 0;
 }
 
-// Called from the player's update each frame. Two jobs, both throttled proportionally to rapid_fire:
-//  1. Slow fire weapons (RPG, GRL, Walther 2000): the weapon's animation field is cleared on a fraction
-//     of frames proportional to the rapid_fire level, so the weapon fires at the same multiplier the
-//     regular rapid_fire gives the other guns. Only when a slow fire weapon is in hand and idle.
-//  2. Grenades: after a throw starts a short recovery window, the held weapon's animation and the
+// Restore the fire mode on the weapon we converted to auto, if any. Called when rapid_fire_extra goes
+// off, the player dies, the weapon leaves hand, or the level ends.
+void RestoreAutoFire() {
+    if (!g_auto_fire_weapon) return;
+    uint32_t data = R32(g_auto_fire_weapon + kWeaponData);
+    if (data) G<uint8_t>(data + kDataFireMode) = g_auto_fire_original;
+    g_auto_fire_weapon = 0;
+    g_auto_fire_original = 0;
+}
+
+// Force full-auto fire mode on the given slow-fire weapon, saving its original byte for the restore.
+// Only logs the first time a given weapon is converted so the log stays readable during a play session.
+void SetAutoFire(uint32_t weapon) {
+    uint32_t data = R32(weapon + kWeaponData);
+    if (!data) return;
+    if (g_auto_fire_weapon == weapon) {
+        // Same weapon, make sure the byte is still 1 (in case something else wrote it)
+        if (G<uint8_t>(data + kDataFireMode) != 1) G<uint8_t>(data + kDataFireMode) = 1;
+        return;
+    }
+    // Different weapon: restore the previous one first
+    RestoreAutoFire();
+    g_auto_fire_weapon = weapon;
+    g_auto_fire_original = G<uint8_t>(data + kDataFireMode);
+    if (g_auto_fire_original != 1) G<uint8_t>(data + kDataFireMode) = 1;
+    // Log so the offset can be verified (RPG has 0 here, AK-47 has 1)
+    LOGI("weapons: auto-fire on weapon %08X (data + %X: %u -> 1)", unsigned(weapon),
+         unsigned(kDataFireMode), unsigned(g_auto_fire_original));
+}
+
+// Called from the player's update each frame. Three jobs, all gated on rapid_fire_extra being on:
+//  1. Auto-fire: set the in-hand slow-fire weapon's fire mode to auto so a held trigger keeps firing,
+//     restoring it when the weapon leaves hand or the option goes off.
+//  2. Slow fire throttle: clear the weapon's animation field on a fraction of the frames proportional to
+//     rapid_fire, capping the fire rate at 8/rapid_fire frames between shots (8X every frame, 2X every
+//     fourth). Combined with (1), holding the trigger fires continuously at the rapid_fire level.
+//  3. Grenades: after a throw starts a short recovery window, the held weapon's animation and the
 //     inventory's busy flag are cleared at the same proportional rate, so the throw repeats at the
-//     rapid_fire level. Only when rapid_fire_extra + infinite_grenades are both on.
-// A rapid_fire of 1 (OFF) makes this a no-op and resets the throttle counters.
+//     rapid_fire level. Only when infinite_grenades is also on.
+// A rapid_fire of 1 (OFF) makes this a no-op and resets all state.
 void ExtraRapidFire() {
     const game::Options& o = game::Opt();
     if (!o.rapid_fire_extra || o.rapid_fire <= 1) {
+        RestoreAutoFire();
         g_grenade_recovery = 0;
         g_slowfire_counter = kMaxRapidLevel;
         g_grenade_counter = kMaxRapidLevel;
@@ -152,6 +202,7 @@ void ExtraRapidFire() {
     }
     uint32_t me = Player();
     if (!me || R32(me + kCharDying)) {
+        RestoreAutoFire();
         g_grenade_recovery = 0;
         g_slowfire_counter = kMaxRapidLevel;
         g_grenade_counter = kMaxRapidLevel;
@@ -159,26 +210,31 @@ void ExtraRapidFire() {
     }
     uint32_t inv = me + kPlayerInventory;
     if (R32(inv + kInvOwner) != me) {
+        RestoreAutoFire();
         g_grenade_recovery = 0;
         g_slowfire_counter = kMaxRapidLevel;
         g_grenade_counter = kMaxRapidLevel;
         return;
     }
-    const int step = int(o.rapid_fire);
+    const bool switching = R32(inv + kInvRequest) != 0 || R32(inv + kInvHeld) != R32(inv + kInvSwitchTo);
+    uint32_t held = R32(inv + kInvHeld);
+    const bool slow_in_hand = !switching && held && SlowFireHeld(held);
 
-    // (1) slow fire weapons — throttle by rapid_fire level
+    // (1) auto-fire: only for the slow-fire weapon actually in hand and idle; restore otherwise
+    if (slow_in_hand) SetAutoFire(held);
+    else RestoreAutoFire();
+
+    // (2) slow fire throttle — proportional to rapid_fire level
+    const int step = int(o.rapid_fire);
     g_slowfire_counter -= step;
     if (g_slowfire_counter <= 0) {
         g_slowfire_counter = kMaxRapidLevel;
-        if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
-            uint32_t weapon = R32(inv + kInvHeld);
-            if (weapon && SlowFireHeld(weapon)) {
-                if (R32(weapon + kWeaponAnim)) W32(weapon + kWeaponAnim, 0);
-            }
+        if (slow_in_hand) {
+            if (R32(held + kWeaponAnim)) W32(held + kWeaponAnim, 0);
         }
     }
 
-    // (2) grenade throw recovery — same throttle, separate counter
+    // (3) grenade throw recovery — same throttle, separate counter
     int frames = g_grenade_recovery.load(std::memory_order_relaxed);
     if (frames <= 0) {
         g_grenade_counter = kMaxRapidLevel;
@@ -193,7 +249,6 @@ void ExtraRapidFire() {
     g_grenade_counter -= step;
     if (g_grenade_counter <= 0) {
         g_grenade_counter = kMaxRapidLevel;
-        uint32_t held = R32(inv + kInvHeld);
         if (held && R32(held + kWeaponAnim)) W32(held + kWeaponAnim, 0);
         uint32_t busy = R32(inv + kInvBusy);
         if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
@@ -217,7 +272,7 @@ X86_FUNC(sub_001E5FA0) {
             G<uint8_t>(me + kCharInvulnerable) = 0;
             g_invulnerable = false;
         }
-        ExtraRapidFire();  // rapid fire extra: slow fire weapons + grenade throw recovery
+        ExtraRapidFire();  // rapid fire extra: auto-fire + slow fire throttle + grenade throw recovery
     }
     __imp__sub_001E5FA0(ctx, base);
 }
