@@ -1,5 +1,17 @@
 # Builds the full APK with the native renderer and the recompiled game.
-# ABI-split build: menghasilkan dua APK terpisah (arm64-v8a & armeabi-v7a).
+#
+# Runs:
+#  - v* tag: builds and publishes a release on the pushed tag.
+#  - manual: Actions -> Build -> Run workflow. Pick any branch, tag or commit in the `ref` input; the APK is published
+#    to a new GitHub release (tag `v<version>`, default version `preview-<run>`) created on the built commit.
+#    It still needs the secrets below: the recompiler cannot run without the decrypted default.xbe.
+#  - pull request: not run here. Use the UI Preview workflow to test the interface from a branch.
+#
+# If a tag/release with the same name already exists, the old one is deleted and replaced with the new build.
+#
+# Secrets: XBE_KEY, KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD.
+#
+# Output: ABI-split APKs (arm64-v8a + armeabi-v7a), two files per release.
 name: Build Black Android ( Plus++ )
 
 on:
@@ -106,12 +118,19 @@ jobs:
           grep -n "minSdk" "$gradle_file"
 
       # ═══════════════════════════════════════════════════════════════════
-      # NEW: ABI SPLITS (enable = true) - dua APK terpisah
+      # ABI SPLITS (enabled) — produces two separate APKs:
       #   arm64-v8a   (64-bit)
       #   armeabi-v7a (32-bit)
-      # universalApk = false  -> hanya dua APK split, tidak ada universal
-      # (ubah ke `isUniversalApk = true` / `universalApk true` bila
-      #  Anda tetap ingin APK universal tambahan)
+      #
+      # IMPORTANT: when `splits.abi` is enabled, AGP rejects any entry in
+      # `ndk.abiFilters` that overlaps with the split list, throwing:
+      #   "Conflicting configuration : '<abi>' in ndk abiFilters cannot be
+      #    present when splits abi filters are set : armeabi-v7a,arm64-v8a"
+      # The block below therefore first calls `abiFilters.clear()` (removes
+      # every existing entry: single-line, multi-line, addAll, +=) and only
+      # then enables splits. Gradle merges multiple `android { }` blocks, so
+      # appending this block at EOF is safe even if the file already has its
+      # own `android` / `defaultConfig` block.
       # ═══════════════════════════════════════════════════════════════════
       - name: Enable ABI splits (32-bit + 64-bit)
         shell: bash
@@ -128,20 +147,25 @@ jobs:
           echo "Patch file: $gradle_file"
 
           if [[ "$gradle_file" == *.kts ]]; then
-            block=$'\n// CI: ABI splits (arm64-v8a + armeabi-v7a)\nandroid {\n    splits {\n        abi {\n            isEnable = true\n            reset()\n            include("armeabi-v7a", "arm64-v8a")\n            isUniversalApk = false\n        }\n    }\n}\n'
+            block=$'\n// CI: ABI splits (arm64-v8a + armeabi-v7a)\n// ndk.abiFilters cleared to avoid conflict with splits.abi\nandroid {\n    defaultConfig {\n        ndk {\n            abiFilters.clear()\n        }\n    }\n    splits {\n        abi {\n            isEnable = true\n            reset()\n            include("armeabi-v7a", "arm64-v8a")\n            isUniversalApk = false\n        }\n    }\n}\n'
           else
-            block=$'\n// CI: ABI splits (arm64-v8a + armeabi-v7a)\nandroid {\n    splits {\n        abi {\n            enable true\n            reset()\n            include "armeabi-v7a", "arm64-v8a"\n            universalApk false\n        }\n    }\n}\n'
+            block=$'\n// CI: ABI splits (arm64-v8a + armeabi-v7a)\n// ndk.abiFilters cleared to avoid conflict with splits.abi\nandroid {\n    defaultConfig {\n        ndk {\n            abiFilters.clear()\n        }\n    }\n    splits {\n        abi {\n            enable true\n            reset()\n            include "armeabi-v7a", "arm64-v8a"\n            universalApk false\n        }\n    }\n}\n'
           fi
 
+          # Idempotent: drop any previously injected CI block (from older runs)
+          # by truncating from the "// CI: ABI splits" marker line to EOF.
           if grep -q 'CI: ABI splits' "$gradle_file"; then
-            echo "ABI splits sudah ada, skip."
-          else
-            printf '%s\n' "$block" >> "$gradle_file"
-            echo "ABI splits ditambahkan."
+            marker_line=$(grep -n 'CI: ABI splits' "$gradle_file" | head -n1 | cut -d: -f1)
+            awk -v start="$marker_line" 'NR < start { print }' "$gradle_file" > "${gradle_file}.tmp"
+            mv "${gradle_file}.tmp" "$gradle_file"
+            echo "Removed previous CI block; rewriting with current version."
           fi
+
+          printf '%s\n' "$block" >> "$gradle_file"
+          echo "ABI splits appended (and ndk.abiFilters cleared)."
 
           echo "---- tail of $gradle_file ----"
-          tail -n 22 "$gradle_file"
+          tail -n 30 "$gradle_file"
 
       - uses: actions/setup-java@v5
         with:
@@ -258,16 +282,23 @@ jobs:
         run: |
           set -uo pipefail
           echo "Checking for existing tag/release: $TAG"
+
+          # 1) Delete the old GitHub release (if any) so it can be recreated.
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Release $TAG found -> deleting"
             if [ "$EVENT_NAME" = "push" ]; then
+              # Triggered by push tag: keep the tag, delete only the release.
               gh release delete "$TAG" --repo "$REPO" --yes || true
             else
+              # Manual build: delete release AND tag together.
               gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag || true
             fi
           else
             echo "No existing release: $TAG"
           fi
+
+          # 2) Delete the git tag (local & remote) - only for manual builds.
+          #    For push-tag events, the tag is the build target -> skip.
           if [ "$EVENT_NAME" != "push" ]; then
             if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
               echo "Remote tag $TAG found -> deleting"
@@ -282,6 +313,7 @@ jobs:
           else
             echo "Triggered by push tag -> skipping tag deletion"
           fi
+
           echo "Cleanup done."
 
       - name: Build
@@ -376,7 +408,7 @@ jobs:
           dir /b app\build\outputs\apk\release\*.apk
 
       # ═══════════════════════════════════════════════════════════════════
-      # NEW: Rename both split APKs (bukan 1 file lagi)
+      # Rename both split APKs (Gradle emits one per ABI).
       # ═══════════════════════════════════════════════════════════════════
       - name: Name the split APKs
         shell: bash
@@ -399,8 +431,8 @@ jobs:
           ls -la Black-*.apk
 
       # ═══════════════════════════════════════════════════════════════════
-      # NEW: Pastikan setiap APK benar-benar hanya berisi ABI-nya sendiri
-      # (bukan universal), dan berisi native lib yang diharapkan.
+      # Verify each split APK contains ONLY its own ABI (i.e. is not
+      # accidentally universal) and does contain its expected native libs.
       # ═══════════════════════════════════════════════════════════════════
       - name: Verify ABI splits
         shell: bash
@@ -409,7 +441,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v unzip >/dev/null 2>&1; then
-            echo "::warning::unzip tidak tersedia, skip verifikasi ABI"
+            echo "::warning::unzip not available, skipping ABI verification"
             exit 0
           fi
           for abi in arm64-v8a armeabi-v7a; do
@@ -434,7 +466,7 @@ jobs:
           done
 
       # ═══════════════════════════════════════════════════════════════════
-      # NEW: Sign & verify KEDUA APK split
+      # Sign & verify BOTH split APKs with the release keystore.
       # ═══════════════════════════════════════════════════════════════════
       - name: Sign & verify release APKs
         shell: cmd
@@ -518,8 +550,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ═══════════════════════════════════════════════════════════════════
-      # NEW: Release notes - template diisi dengan APK arm64 sebagai
-      # "primary", lalu ditambahkan tabel ABI split untuk kedua file.
+      # Release notes: fill the template with the arm64 APK as the primary
+      # entry, then append the ABI-split table for both files.
       # ═══════════════════════════════════════════════════════════════════
       - name: Release notes
         shell: bash
