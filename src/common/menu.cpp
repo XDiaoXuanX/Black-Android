@@ -110,8 +110,7 @@ const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
 
 // RAPID FIRE levels the panel steps through. 1 = OFF, then 2X..8X, then doubling up to 512X, then the
 // INFINITE sentinel (999). hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire, so 999
-// makes the wait effectively zero → one projectile per frame (frame-rate continuous fire) for weapons
-// whose pacing is in the wait field. Values 2..8 keep the original meaningful multipliers.
+// makes the wait effectively zero → one projectile per frame (frame-rate continuous fire).
 constexpr uint32_t kRapidFireLevels[] = {
     1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128, 256, 512, 999,
 };
@@ -120,7 +119,7 @@ const char* const kRapidFireNames[] = {
     "16X",  "32X",  "64X",  "128X", "256X", "512X", "INFINITE",
 };
 
-// the ESP display modes: bit 0 = line, bit 1 = health bar (2 bits, 4 combinations)
+// ESP MODE TARGET: bit 0 = line, bit 1 = health bar (2 bits, 4 combinations)
 const char* const kEspDisplayNames[] = {
     "OFF",             // 0
     "LINE",            // 1
@@ -271,12 +270,13 @@ void Changed() {
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity,
              kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kAudioOutput, kLanguage,
              kFmvScale, kGyro, kGyroSensitivity, kTouchLayout, kTouchOpacity, kTouchSize, kTouchEdit,
-             kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
-             kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
-             kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor,
-             kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
-             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kWallbang, kGameSpeed, kGodMode,
+             kOneHitKill, kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone,
+             kLeftSensitivity, kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels,
+             kUnlockBlackOps, kTouchSkin, kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay,
+             kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone,
+             kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate,
+             kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -348,12 +348,13 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kRapidFireExtra, "RAPID FIRE EXTRA"},
     {Kind::Value, kNoRecoil, "NO RECOIL"},
     {Kind::Value, kNoBulletSpread, "NO BULLET SPREAD"},
+    {Kind::Value, kWallbang, "WALLBANG"},           // <-- baru
     {Kind::Heading, -1, "PLAYER"},
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
-    {Kind::Value, kEsp, "ESP MODE"},                // <-- master on/off (was "ESP MASTER")
-    {Kind::Value, kEspDisplay, "ESP MODE TARGET"},  // <-- selector mode (was "ESP MODE")
+    {Kind::Value, kEsp, "ESP MODE"},
+    {Kind::Value, kEspDisplay, "ESP MODE TARGET"},
     {Kind::Value, kEspColor, "ESP COLOR"},
     {Kind::Value, kEspRed, "ESP RED"},
     {Kind::Value, kEspGreen, "ESP GREEN"},
@@ -438,6 +439,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRapidFireExtra: return &o.rapid_fire_extra;
         case kNoRecoil: return &o.no_recoil;
         case kNoBulletSpread: return &o.no_bullet_spread;
+        case kWallbang: return &o.wallbang;
         case kGodMode: return &o.god_mode;
         case kInfiniteMedkits: return &o.infinite_medkits;
         case kOneHitKill: return &o.one_hit_kill;
@@ -736,6 +738,7 @@ void RestoreDefaults(int page) {
         o.rapid_fire_extra = none.rapid_fire_extra;
         o.no_recoil = none.no_recoil;
         o.no_bullet_spread = none.no_bullet_spread;
+        o.wallbang = none.wallbang;
         o.game_speed = none.game_speed;
         o.god_mode = none.god_mode;
         o.infinite_medkits = none.infinite_medkits;
@@ -777,6 +780,7 @@ void RestoreDefaults(int page) {
     o.rapid_fire_extra = keep.rapid_fire_extra;
     o.no_recoil = keep.no_recoil;
     o.no_bullet_spread = keep.no_bullet_spread;
+    o.wallbang = keep.wallbang;
     o.game_speed = keep.game_speed;
     o.god_mode = keep.god_mode;
     o.infinite_medkits = keep.infinite_medkits;
