@@ -56,10 +56,21 @@ struct Options {
     // divided the usual way, subject to the game's fire-mode pacing.
     uint32_t rapid_fire = 1;
     // cheat: rapid fire also reaches the four slow fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) and,
-    // with infinite_grenades also on, the grenade throw. The four weapons keep their pacing in their own first
-    // person animation, and the grenade throw in a recovery animation; when this is on and rapid_fire is any
-    // non-OFF level, those animations are cleared at a fraction of the frames proportional to rapid_fire, so
-    // the game accepts the next trigger pull (or throw) sooner — recovery-window version.
+    // with infinite_grenades also on, the grenade throw.
+    //
+    //  - Slow-fire weapons keep their pacing in their own first-person animation; when this is on and
+    //    rapid_fire is any non-OFF level, that animation is cleared at a fraction of frames proportional to
+    //    rapid_fire (2X = every 4th frame, 8X = every frame) so the game accepts the next trigger pull
+    //    sooner. rapid_fire = OFF disables this branch.
+    //  - Grenades are independent: they work with this flag + infinite_grenades ALONE, no rapid_fire level
+    //    required. Each throw's release is detected the instant the grenade count drops (sub_001E8830), and
+    //    the throw animation, the held weapon's animation and the inventory busy flag are cleared right
+    //    after the game's update (in ExtraRapidFire, cheats.cpp), so the next frame starts a fresh throw:
+    //    continuous grenade spam with no pause, no delay, no recovery window, at the animation's own release
+    //    rate (~2-3 throws/sec at 60 fps).
+    //
+    // Combined with INFINITE GRENADES, enabling RAPID FIRE EXTRA alone is enough to make grenades spam even
+    // with RAPID FIRE = OFF; the slow-fire weapon path still needs rapid_fire > 1.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
