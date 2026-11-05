@@ -114,6 +114,8 @@ const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", 
                                       "INDONESIAN"};  // as game::kLanguages
 // the four aimbot target heights (esp.cpp kAimHeights), picked by aimbot_target
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
+// the three ESP display modes, picked by esp_display
+const char* const kEspDisplayNames[] = {"BOTH", "BOX", "LINE"};
 
 // the ESP line colour presets: the same float rgb as esp.cpp kEspPresets, plus the name shown in the row. A
 // preset stepped on writes its colour into esp_red / esp_green / esp_blue and any manual change to those switches
@@ -273,9 +275,9 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot,
-             kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspHealth, kEspColor, kEspRed,
+             kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes,
+             kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -349,7 +351,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
     {Kind::Value, kRapidFire, "RAPID FIRE"},
-    {Kind::Value, kRapidFireExtra, "RAPID FIRE EXTRA"},  // RPG/GRL/Walther 2000 + grenade
+    {Kind::Value, kRapidFireExtra, "RAPID FIRE EXTRA"},
     {Kind::Value, kNoRecoil, "NO RECOIL"},
     {Kind::Value, kNoBulletSpread, "NO BULLET SPREAD"},
     {Kind::Heading, -1, "PLAYER"},
@@ -357,10 +359,12 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
-    {Kind::Value, kEspColor, "ESP COLOR"},     // WHITE / RED / … / CUSTOM
-    {Kind::Value, kEspRed, "ESP RED"},          // 0 – 255 (custom)
-    {Kind::Value, kEspGreen, "ESP GREEN"},      // 0 – 255 (custom)
-    {Kind::Value, kEspBlue, "ESP BLUE"},        // 0 – 255 (custom)
+    {Kind::Value, kEspDisplay, "ESP DISPLAY"},     // BOTH / BOX / LINE
+    {Kind::Value, kEspHealth, "ESP HEALTH BAR"},   // ON / OFF
+    {Kind::Value, kEspColor, "ESP COLOR"},         // WHITE / RED / … / CUSTOM
+    {Kind::Value, kEspRed, "ESP RED"},             // 0 – 255 (custom)
+    {Kind::Value, kEspGreen, "ESP GREEN"},         // 0 – 255 (custom)
+    {Kind::Value, kEspBlue, "ESP BLUE"},           // 0 – 255 (custom)
     {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},
     {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},     // NECK / BODY / LEGS / HEAD
     {Kind::Value, kAimbotPull, "AIMBOT PULL"},         // 1% - 100% (magnet strength)
@@ -448,9 +452,10 @@ bool* ToggleFlag(Settings& s, int id) {
         case kInfiniteMedkits: return &o.infinite_medkits;
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
+        case kEsp: return &o.esp;
+        case kEspHealth: return &o.esp_health;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
-        case kEsp: return &o.esp;
         case kAimbot: return &o.aimbot;
         case kDynamicRes: return &o.dynamic_resolution;
         default: return nullptr;
@@ -560,6 +565,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 8, 1, step));
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
+            return true;
+        case kEspDisplay:
+            // BOTH / BOX / LINE
+            if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 2, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 2u)]);
             return true;
         case kEspColor: {
             // 0..kEspPresetCount-1 a preset, kEspPresetCount CUSTOM. Stepping on a preset writes its rgb into the
@@ -785,6 +795,8 @@ void RestoreDefaults(int page) {
         o.unlock_levels = none.unlock_levels;
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
+        o.esp_display = none.esp_display;
+        o.esp_health = none.esp_health;
         o.esp_color = none.esp_color;
         o.esp_red = none.esp_red;
         o.esp_green = none.esp_green;
@@ -826,6 +838,8 @@ void RestoreDefaults(int page) {
     o.unlock_levels = keep.unlock_levels;
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
+    o.esp_display = keep.esp_display;
+    o.esp_health = keep.esp_health;
     o.esp_color = keep.esp_color;
     o.esp_red = keep.esp_red;
     o.esp_green = keep.esp_green;
