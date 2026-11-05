@@ -31,17 +31,29 @@ constexpr float kFullHealth[] = {1200.0f, 750.0f};
 // ---- extra rapid fire ------------------------------------------------------------------------------
 // RAPID FIRE EXTRA drives two independent things:
 //
-//  (1) Slow-fire weapons (RPG, GRL, Walther 2000 = SNR/SN5) — gated by rapid_fire_extra AND rapid_fire > 1.
-//      The held weapon's animation is cleared at a fraction of frames proportional to rapid_fire (2X = every
-//      4th frame, 8X = every frame), so the game accepts the next trigger pull sooner. RAPID FIRE OFF
-//      disables this branch: these weapons need a rate multiplier to speed up.
+//  (1) Slow-fire weapons — gated by rapid_fire_extra AND rapid_fire > 1. The held weapon's animation is
+//      cleared at a fraction of frames proportional to rapid_fire (2X = every 4th frame, 8X = every frame,
+//      INFINITE = every frame), so the game accepts the next trigger pull sooner. RAPID FIRE OFF disables
+//      this branch: these weapons need a rate multiplier to speed up.
 //
-//  (2) Grenades — gated by rapid_fire_extra AND infinite_grenades ALONE. NO rapid_fire level required:
-//      grenades throw continuously, with no pause, no delay, no recovery window, even when RAPID FIRE is OFF.
-//      The throw animation lives on the CHARACTER at +0xD8 (there is no grenade weapon object), and it must
-//      be allowed to play until the "release" event fires (sub_001E8830 receives it, the grenade count drops).
-//      If we cleared the animation before that event, the animation would never reach its release frame and
-//      no grenade would come out.
+//      The list:
+//        - RPG   (RPG, single shot, slow reload)
+//        - GRL   (Grenade launcher, single shot, slow reload)
+//        - SNR   (Walther 2000, bolt action, slow cycle)
+//        - SN5   (Walther 2000 silenced, same)
+//        - BNS   (M16A2 + M203): the M16 primary fire is already fast via rapid_fire (wait divider in
+//                 hooks.cpp sub_001EEFD0). The M203 UNDER-BARREL GRENADE LAUNCHER (alternate fire) is the
+//                 slow part: it plays a break-open / load / close animation that gates the next shot.
+//                 Clearing kWeaponAnim lets the M203 fire continuously, without pause, without delay.
+//                 NOTE: infinite_ammo must be ON so the M203's alt ammo (kWeaponAltAmmo, +0xF8) does not
+//                 deplete; infinite_grenades is NOT needed (that is for hand grenades only).
+//
+//  (2) Grenades (hand grenades) — gated by rapid_fire_extra AND infinite_grenades ALONE. NO rapid_fire level
+//      required: grenades throw continuously, with no pause, no delay, no recovery window, even when RAPID
+//      FIRE is OFF. The throw animation lives on the CHARACTER at +0xD8 (there is no grenade weapon object),
+//      and it must be allowed to play until the "release" event fires (sub_001E8830 receives it, the grenade
+//      count drops). If we cleared the animation before that event, the animation would never reach its
+//      release frame and no grenade would come out.
 //
 //      The fix is to CLEAR ONLY WHEN THE EVENT HAS JUST FIRED. sub_001E8830 sets g_throw_just_fired on every
 //      release (count drop). ExtraRapidFire consumes the flag with exchange(false) and clears the character's
@@ -133,7 +145,15 @@ std::string CodeOf(const std::string& name) {
 }
 
 bool SlowFireHeld(uint32_t weapon) {
-    static const std::set<std::string> kSlowCodes = {"RPG", "GRL", "SNR", "SN5"};
+    // Slow-fire weapons whose fire animation gates the next shot and needs to be cleared for rapid_fire_extra:
+    //   RPG, GRL   single-shot launchers with slow reload
+    //   SNR, SN5   Walther 2000 bolt action (silenced / unsilenced)
+    //   BNS        M16A2 + M203: the M203 under-barrel launcher's break-open / load / close animation. The
+    //              M16 primary fire is already handled by rapid_fire's wait divider, but the M203 alternate
+    //              fire is a single-shot launcher with a slow cycle — clearing its animation lets it fire
+    //              continuously, without pause, without delay. Requires infinite_ammo (M203 alt ammo at
+    //              +0xF8) so the launcher does not run dry.
+    static const std::set<std::string> kSlowCodes = {"RPG", "GRL", "SNR", "SN5", "BNS"};
     uint32_t manager = R32(kWeaponManager);
     uint32_t table = manager ? R32(manager) : 0;
     if (!table) return false;
@@ -148,14 +168,16 @@ bool SlowFireHeld(uint32_t weapon) {
 
 // Called from the player's update AFTER the game's own update (see sub_001E5FA0 below). Runs two INDEPENDENT
 // jobs:
-//  (1) Slow-fire weapons (RPG, GRL, SNR, SN5): gated by rapid_fire_extra + rapid_fire > 1, throttled by the
-//      rapid_fire level. RAPID FIRE OFF disables this branch.
-//  (2) Grenades: gated by rapid_fire_extra + infinite_grenades ALONE — no rapid_fire level required.
+//  (1) Slow-fire weapons (RPG, GRL, SNR, SN5, BNS): gated by rapid_fire_extra + rapid_fire > 1, throttled by
+//      the rapid_fire level. RAPID FIRE OFF disables this branch. For BNS, this clears the M203 under-barrel
+//      launcher's slow animation so it fires continuously.
+//  (2) Grenades (hand): gated by rapid_fire_extra + infinite_grenades ALONE — no rapid_fire level required.
 //      Continuous spam, no pause, no delay, no recovery window. Works even when RAPID FIRE is OFF.
 void ExtraRapidFire() {
     const game::Options& o = game::Opt();
 
-    // (1) slow-fire path needs rapid_fire > 1;  (2) grenade path needs only the toggle + infinite_grenades.
+    // (1) slow-fire path (incl. BNS M203) needs rapid_fire > 1;
+    // (2) hand grenade path needs only the toggle + infinite_grenades.
     bool slowfire_on = o.rapid_fire_extra && o.rapid_fire > 1;
     bool grenades_on = o.rapid_fire_extra && o.infinite_grenades;
 
@@ -177,7 +199,8 @@ void ExtraRapidFire() {
         return;
     }
 
-    // (1) Slow-fire weapons — throttled by the rapid_fire level, only when slowfire_on
+    // (1) Slow-fire weapons — throttled by the rapid_fire level, only when slowfire_on.
+    //     Includes BNS: clearing the M203 launcher's animation lets it fire continuously.
     if (slowfire_on) {
         g_slowfire_counter -= int(o.rapid_fire);
         if (g_slowfire_counter <= 0) {
@@ -193,7 +216,7 @@ void ExtraRapidFire() {
         g_slowfire_counter = kMaxRapidLevel;
     }
 
-    // (2) Grenades — continuous throwing, independent of rapid_fire level. Each time a release fires
+    // (2) Hand grenades — continuous throwing, independent of rapid_fire level. Each time a release fires
     // (sub_001E8830 sees the count drop and sets g_throw_just_fired), clear the throw animation, the
     // weapon animation and the busy flag. The game then sees the character idle with the throw button
     // still held and starts the next throw the next frame — no pause, no delay, no recovery window.
@@ -261,8 +284,8 @@ X86_FUNC(sub_001E74B0) {
 // animation state machine (sub_0017B130 in hooks.cpp). Doing it in ExtraRapidFire after the update makes the
 // clear the last write of the frame and lets the game start the next frame with animation = 0.
 //
-// The g_throw_just_fired flag is set ONLY when rapid_fire_extra is on — grenades are part of rapid_fire_extra
-// and do NOT require a rapid_fire level (RAPID FIRE may be OFF and grenades still spam).
+// The g_throw_just_fired flag is set ONLY when rapid_fire_extra is on — hand grenades are part of
+// rapid_fire_extra and do NOT require a rapid_fire level (RAPID FIRE may be OFF and grenades still spam).
 X86_EXTERN_FUNC(__imp__sub_001E8830);
 X86_FUNC(sub_001E8830) {
     uint32_t who = R32(ctx.esp + 0xC);
@@ -272,7 +295,7 @@ X86_FUNC(sub_001E8830) {
     __imp__sub_001E8830(ctx, base);
     if (keep && G<uint16_t>(me + kCharGrenades) < grenades) {
         G<uint16_t>(me + kCharGrenades) = grenades;
-        // Grenades are part of rapid_fire_extra: only the toggle gates them, no rapid_fire level needed.
+        // Hand grenades are part of rapid_fire_extra: only the toggle gates them, no rapid_fire level needed.
         if (game::Opt().rapid_fire_extra) g_throw_just_fired = true;
     }
 }
