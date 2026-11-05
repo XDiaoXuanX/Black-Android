@@ -45,7 +45,7 @@ struct Options {
     uint32_t right_deadzone = 0;
     float left_sensitivity = 1.0f;
     float right_sensitivity = 1.0f;
-    uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
+    uint32_t audio_output = 0;  // audio::kOutputAuto, audio::kOutputStereo, audio::kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
     bool infinite_ammo = false;  // cheat: the player's magazine and reserve never go down
     uint32_t rapid_fire = 1;  // cheat: times the player's rate of fire, 1 the game's
@@ -66,25 +66,40 @@ struct Options {
     bool infinite_medkits = false;  // cheat: using a medkit keeps the count (src/game/weapons.cpp)
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
-    bool esp = false;  // cheat: the ESP (see esp_display, esp_health) draws over each living enemy
-    // cheat: what the ESP draws, when esp is on. 0 draws both the line to the enemy and the box round it,
-    // 1 draws only the box, 2 draws only the line. The health bar below is independent: it draws above the
-    // head whenever esp_health is on, whichever display mode is chosen.
+    bool esp = false;  // cheat: the ESP draws over each living enemy or friendly (see esp_targets, esp_display)
+    // cheat: which characters the ESP draws. 0 enemies only (the historical behaviour), 1 friendlies only,
+    // 2 both. The friendly kind below (esp_friendly_kind) decides which character kind counts as "friendly".
+    // Aimbot has its own filter, aimbot_targets, which is independent of this one.
+    uint32_t esp_targets = 0;
+    // cheat: which character kind is treated as a friendly when esp_targets or aimbot_targets ask for them.
+    // The game's kind field is 1 for axis, 2 for player, 3 for allied NPC by convention. If 3 shows no
+    // friendlies, try 0, 4, or 5 — the exact value is not confirmed by RE, and may vary by mission.
+    uint32_t esp_friendly_kind = 3;
+    // cheat: what the ESP draws, when esp is on. 0 draws both the line and the box, 1 draws only the box,
+    // 2 draws only the line. The health bar below is independent: it draws above the head whenever
+    // esp_health is on, whichever display mode is chosen.
     uint32_t esp_display = 0;
-    // cheat: a small health bar above each enemy's head, full width for kEnemyRefHealth HP (250) or more,
-    // proportional below that. Green above 66% of the reference, yellow above 33%, red below. Draws on top
-    // of whatever esp_display selects; only active when esp is on.
+    // cheat: a small health bar above each enemy or friendly's head, full width for kEnemyRefHealth HP (250)
+    // or more, proportional below that. Green above 66% of the reference, yellow above 33%, red below. Draws
+    // on top of whatever esp_display selects; only active when esp is on.
     bool esp_health = true;
     // cheat: colour of the ESP lines. 0..7 a preset from kEspPresets (WHITE, RED, GREEN, CYAN, YELLOW, MAGENTA,
     // ORANGE, PURPLE), 8 CUSTOM: the esp_red / esp_green / esp_blue below. Stepping the preset writes its
     // colour into those three fields, and any manual change of them switches the preset back to CUSTOM, so the
     // two always agree — the row shows a preset name while the number is one of the eight, CUSTOM otherwise.
+    // Applies to the primary target in ESP: enemies in ENEMIES and BOTH modes, friendlies in FRIENDLIES mode.
     uint32_t esp_color = 0;
     uint32_t esp_red = 224;    // 0..255, custom red    (224/255 ≈ 0.88, the soft white the ESP shipped with)
     uint32_t esp_green = 219;  // 0..255, custom green  (219/255 ≈ 0.86)
     uint32_t esp_blue = 209;   // 0..255, custom blue   (209/255 ≈ 0.82)
-    bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
-    // cheat: where the aimbot aims on the enemy. 0 the neck just under the chin (lethal, forgiving to bob),
+    bool aimbot = false;  // cheat: aiming in turns the view to the body of the nearest target within the cone
+    // cheat: which characters the aimbot turns to. 0 enemies only (the historical behaviour), 1 friendlies only,
+    // 2 both. The friendly kind (esp_friendly_kind) decides which character kind counts as "friendly", shared
+    // with the ESP filter so the value only has to be tuned once. Independent of esp_targets: you can aim at
+    // one group while the ESP draws the other. When set to BOTH, an ally running into the cone can steal the
+    // crosshair from a distant enemy — keep this on ENEMIES if that is undesirable.
+    uint32_t aimbot_targets = 0;
+    // cheat: where the aimbot aims on the chosen target. 0 the neck just under the chin (lethal, forgiving to bob),
     // 1 the chest centre (easier to land, less lethal), 2 the legs (slows a sprinting enemy without killing),
     // 3 the head (the headshot line, most lethal, most sensitive to the bob of a walking or crouching enemy)
     uint32_t aimbot_target = 0;
