@@ -23,6 +23,12 @@ constexpr uint32_t kCharGrenades = 0x286;  // uint16
 constexpr uint32_t kCharHealth = 0x2F0;    // float, the difficulty's full at most
 constexpr uint32_t kCharDying = 0x384;     // not 0 once it is killed
 constexpr uint32_t kCharInvulnerable = 0x8F2;
+// The "notarget" byte: right after the invulnerable byte in the character's flags. 1 while the player is
+// hidden from the AI. Set every frame in the player update BEFORE the game's own update so the AI reads it
+// the same frame. This is a best-guess offset: the existing character offsets (kind 0xC4, health 0x2F0,
+// dying 0x384, invulnerable 0x8F2) point at a flag block, and notarget is the standard next byte in the
+// CoD engine. If enemies still track the player with the toggle on, the offset needs to be found by RE.
+constexpr uint32_t kCharNotarget = 0x8F3;
 constexpr uint32_t kPlayerKind = 2;
 
 constexpr uint32_t kDifficulty = 0x2014C;  // in the game object, 0 easy to 3 black ops
@@ -246,13 +252,20 @@ void ExtraRapidFire() {
 }  // namespace
 
 // The player's update. God mode runs BEFORE the game's update so health is full and the invulnerable flag is
-// set when the game checks damage. Extra rapid fire runs AFTER the game's update so its clears are the LAST
+// set when the game checks damage. Invisible player also runs BEFORE the game's update so the AI reads the
+// notarget byte the same frame. Extra rapid fire runs AFTER the game's update so its clears are the LAST
 // writes of the frame and the game starts the next frame with animation = 0 (idle).
 X86_EXTERN_FUNC(__imp__sub_001E5FA0);
 X86_FUNC(sub_001E5FA0) {
     uint32_t me = ctx.ecx;
     bool is_player = me && me == Player() && R32(me + kCharKind) == kPlayerKind;
     if (is_player) {
+        // invisibility: set the notarget byte before the game's update so the AI sees it this frame
+        if (game::Opt().invisible_player && !R32(me + kCharDying)) {
+            G<uint8_t>(me + kCharNotarget) = 1;
+        } else {
+            G<uint8_t>(me + kCharNotarget) = 0;
+        }
         if (game::Opt().god_mode && !R32(me + kCharDying)) {
             float& health = G<float>(me + kCharHealth);
             health = std::max(health, FullHealth());
