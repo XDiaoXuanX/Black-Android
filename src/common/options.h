@@ -48,14 +48,20 @@ struct Options {
     uint32_t audio_output = 0;  // audio::kOutputAuto, audio::kOutputStereo, audio::kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
     bool infinite_ammo = false;  // cheat: the player's magazine and reserve never go down
-    uint32_t rapid_fire = 1;  // cheat: times the player's rate of fire, 1 the game's
+    // cheat: times the player's rate of fire, 1 the game's. The panel offers these discrete values via
+    // kRapidFireLevels / kRapidFireNames in the cheats panel:
+    //   OFF, 2X, 3X, 4X, 5X, 6X, 7X, 8X, 16X, 32X, 64X, 128X, 256X, 512X, INFINITE (999)
+    // Any value >= 2 makes the src/game/cheats.cpp ExtraRapidFire() clear every fire / throw cooldown every
+    // frame, so the practical rate is limited only by how fast the game engine can process a new projectile
+    // (one per frame). The multiplier is therefore a label, not a mathematical cap — 2X and INFINITE give the
+    // same observable rate. 999 is the "INFINITE" sentinel; anything else between 2 and 512 exists so the
+    // user can pick whatever number looks right without there being a hard ceiling.
+    uint32_t rapid_fire = 1;
     // cheat: rapid fire also reaches the four slow fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) and,
     // with infinite_grenades also on, the grenade throw. The four weapons keep their pacing in their own first
-    // person animation, and the grenade throw in a recovery animation that plays after the throw event; when
-    // this is on and rapid_fire is any non-OFF level (2X through 8X), those animations are cleared each frame
-    // in a fraction of the frames proportional to the rapid_fire level — 8X clears every frame, 4X every
-    // other frame, 2X every fourth — so the slow-fire weapons and the grenade throw fire at the same
-    // multiplier the regular rapid_fire gives the other guns.
+    // person animation, and the grenade throw in the character's own animation; when this is on and
+    // rapid_fire is any level above 1 (2X through INFINITE), those animations are cleared every frame, so the
+    // game accepts the next trigger pull (or throw) straight away — continuous, no throttle, no delay.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
