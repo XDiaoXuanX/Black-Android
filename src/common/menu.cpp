@@ -114,7 +114,9 @@ const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", 
                                       "INDONESIAN"};  // as game::kLanguages
 // the four aimbot target heights (esp.cpp kAimHeights), picked by aimbot_target
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
-// the three ESP display modes, picked by esp_display
+// the aimbot and ESP target filters (which character kind), picked by aimbot_targets and esp_targets
+const char* const kTargetsNames[] = {"ENEMIES", "FRIENDLIES", "BOTH"};
+// the ESP display modes, picked by esp_display
 const char* const kEspDisplayNames[] = {"BOTH", "BOX", "LINE"};
 
 // the ESP line colour presets: the same float rgb as esp.cpp kEspPresets, plus the name shown in the row. A
@@ -275,9 +277,10 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspHealth, kEspColor, kEspRed,
-             kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes,
-             kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspTargets, kEspFriendlyKind, kEspDisplay,
+             kEspHealth, kEspColor, kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTargets, kAimbotTarget, kAimbotPull,
+             kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold,
+             kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -359,16 +362,19 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
-    {Kind::Value, kEspDisplay, "ESP DISPLAY"},     // BOTH / BOX / LINE
-    {Kind::Value, kEspHealth, "ESP HEALTH BAR"},   // ON / OFF
-    {Kind::Value, kEspColor, "ESP COLOR"},         // WHITE / RED / … / CUSTOM
-    {Kind::Value, kEspRed, "ESP RED"},             // 0 – 255 (custom)
-    {Kind::Value, kEspGreen, "ESP GREEN"},         // 0 – 255 (custom)
-    {Kind::Value, kEspBlue, "ESP BLUE"},           // 0 – 255 (custom)
+    {Kind::Value, kEspTargets, "ESP TARGETS"},       // ENEMIES / FRIENDLIES / BOTH
+    {Kind::Value, kEspFriendlyKind, "FRIENDLY KIND"},// 0–15, which kind counts as friendly
+    {Kind::Value, kEspDisplay, "ESP DISPLAY"},       // BOTH / BOX / LINE
+    {Kind::Value, kEspHealth, "ESP HEALTH BAR"},     // ON / OFF
+    {Kind::Value, kEspColor, "ESP COLOR"},           // WHITE / RED / … / CUSTOM
+    {Kind::Value, kEspRed, "ESP RED"},               // 0 – 255 (custom)
+    {Kind::Value, kEspGreen, "ESP GREEN"},           // 0 – 255 (custom)
+    {Kind::Value, kEspBlue, "ESP BLUE"},             // 0 – 255 (custom)
     {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},
-    {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},     // NECK / BODY / LEGS / HEAD
-    {Kind::Value, kAimbotPull, "AIMBOT PULL"},         // 1% - 100% (magnet strength)
-    {Kind::Value, kAimbotDeadzone, "AIMBOT DEADZONE"}, // 0.0° - 30.0° (lock-off range, A->B slide)
+    {Kind::Value, kAimbotTargets, "AIMBOT TARGETS"}, // ENEMIES / FRIENDLIES / BOTH
+    {Kind::Value, kAimbotTarget, "AIMBOT BODY PART"},// NECK / BODY / LEGS / HEAD
+    {Kind::Value, kAimbotPull, "AIMBOT PULL"},
+    {Kind::Value, kAimbotDeadzone, "AIMBOT DEADZONE"},
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -485,7 +491,6 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
         case kRenderResolution: {
-            // 20% to 200% in steps of 5; greyed while the dynamic resolution has it, which it shows as it is now
             if (step) s.render_percent = uint32_t(StepRange(int(s.render_percent), 20, 200, 5, step));
             PercentText(o.dynamic_resolution ? dynres::Percent() : s.render_percent, text);
             return true;
@@ -494,7 +499,6 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%u FPS", kDynamicTargets[StepTable(kDynamicTargets, o.dynamic_target_fps, step)]);
             return true;
         case kDynamicMin:
-            // 20% up to the max, the max down to the min
             if (step) o.dynamic_min_percent = uint32_t(StepRange(int(o.dynamic_min_percent), 20, int(o.dynamic_max_percent), 5, step));
             PercentText(o.dynamic_min_percent, text);
             return true;
@@ -503,7 +507,6 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
             PercentText(o.dynamic_max_percent, text);
             return true;
         case kDynamicHold:
-            // 1 to 30 seconds
             if (step) o.dynamic_hold = uint32_t(StepRange(int(o.dynamic_hold), 1, 30, 1, step));
             std::snprintf(text, sizeof(text), "%u S", o.dynamic_hold);
             return true;
@@ -561,20 +564,28 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
         case kRapidFire:
-            // off, then 2 to 8 times the rate
             if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 8, 1, step));
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
+        case kEspTargets:
+            if (step) o.esp_targets = uint32_t(StepRange(int(o.esp_targets), 0, 2, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kTargetsNames[std::clamp(o.esp_targets, 0u, 2u)]);
+            return true;
+        case kAimbotTargets:
+            if (step) o.aimbot_targets = uint32_t(StepRange(int(o.aimbot_targets), 0, 2, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kTargetsNames[std::clamp(o.aimbot_targets, 0u, 2u)]);
+            return true;
+        case kEspFriendlyKind:
+            // 0..15: which character kind counts as friendly; try 0, 4, 5 if 3 shows none
+            if (step) o.esp_friendly_kind = uint32_t(StepRange(int(o.esp_friendly_kind), 0, 15, 1, step));
+            std::snprintf(text, sizeof(text), "%u", o.esp_friendly_kind);
+            return true;
         case kEspDisplay:
-            // BOTH / BOX / LINE
             if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 2, 1, step));
             std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 2u)]);
             return true;
         case kEspColor: {
-            // 0..kEspPresetCount-1 a preset, kEspPresetCount CUSTOM. Stepping on a preset writes its rgb into the
-            // three custom fields, so the number and the colour agree; stepping to CUSTOM keeps the fields as they
-            // are, so the player sees whatever they last set and can adjust from there.
             uint32_t preset = std::clamp(o.esp_color, 0u, uint32_t(kEspPresetCount));
             if (step) {
                 preset = uint32_t(StepIndex(int(preset), step, int(kEspPresetCount) + 1));
@@ -593,7 +604,6 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
         case kEspRed:
         case kEspGreen:
         case kEspBlue: {
-            // 0..255 each; stepping switches the preset back to CUSTOM so the two views stay in agreement
             uint32_t& channel = id == kEspRed ? o.esp_red
                               : id == kEspGreen ? o.esp_green
                               : o.esp_blue;
@@ -605,23 +615,19 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             return true;
         }
         case kAimbotTarget:
-            // NECK, BODY, LEGS, HEAD: the four heights esp.cpp kAimHeights
             if (step) o.aimbot_target = uint32_t(StepRange(int(o.aimbot_target), 0, 3, 1, step));
             std::snprintf(text, sizeof(text), "%s",
                           kAimbotTargetNames[std::clamp(o.aimbot_target, 0u, 3u)]);
             return true;
         case kAimbotPull:
-            // 1% to 100%: the fraction of the angle to the target applied each frame (magnet strength)
             if (step) o.aimbot_pull = uint32_t(StepRange(int(o.aimbot_pull), 1, 100, 1, step));
             std::snprintf(text, sizeof(text), "%u%%", o.aimbot_pull);
             return true;
         case kAimbotDeadzone:
-            // 0.0° to 30.0°, stored in tenths of a degree: inside it the aimbot does not turn
             if (step) o.aimbot_deadzone = uint32_t(StepRange(int(o.aimbot_deadzone), 0, 300, 1, step));
             std::snprintf(text, sizeof(text), "%.1f", o.aimbot_deadzone / 10.0f);
             return true;
         case kGameSpeed:
-            // 25% to 200% in steps of 25
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
             return true;
@@ -638,7 +644,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s", kAudioOutputNames[StepTable(kAudioOutputs, o.audio_output, step)]);
             break;
         case kSensitivity:
-            // 0.1 to 5.0 in steps of 0.1
             if (step) {
                 int tenths = StepRange(int(std::lround(o.mouse_sensitivity * 10.0f)), 1, 50, 1, step);
                 o.mouse_sensitivity = float(tenths) / 10.0f;
@@ -646,7 +651,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%.1f", o.mouse_sensitivity);
             break;
         case kTouchSensitivity:
-            // as the mouse's: 0.1 to 5.0 in steps of 0.1
             if (step) {
                 int tenths = StepRange(int(std::lround(o.touch_sensitivity * 10.0f)), 1, 50, 1, step);
                 o.touch_sensitivity = float(tenths) / 10.0f;
@@ -654,19 +658,16 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%.1f", o.touch_sensitivity);
             break;
         case kWalkSpeed:
-            // 10% to 100% in steps of 5
             if (step) o.walk_speed = uint32_t(StepRange(int(o.walk_speed), 10, 100, 5, step));
             std::snprintf(text, sizeof(text), "%u%%", o.walk_speed);
             break;
         case kGyro:
-            // off, always on, while firing
             if (step) gyro::SetMode(uint32_t(StepIndex(int(gyro::CurrentMode()), step, 3)));
             std::snprintf(text, sizeof(text), "%s", gyro::CurrentMode() == 0 ? "OFF"
                                                     : gyro::CurrentMode() == 1 ? "ALWAYS"
                                                                                : "WHILE FIRING");
             break;
         case kTouchLayout:
-            // the presets, CUSTOM once a control was moved
             if (step) touch::StepLayout(step);
             std::snprintf(text, sizeof(text), "%s", touch::LayoutName());
             break;
@@ -683,28 +684,23 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s", touch::SkinName());
             break;
         case kTouchStick:
-            // under the thumb where it comes down, or fixed in its place
             if (step) touch::StepStickMode(step);
             std::snprintf(text, sizeof(text), "%s", touch::StickModeName());
             break;
         case kTouchEdit:
-            // any step opens the editor over the screen
             if (step) touch::EditLayout();
             std::snprintf(text, sizeof(text), "OPEN");
             break;
         case kCheckUpdates:
-            // any step asks; the answer comes in a dialog over the game
             if (step) host::CheckForUpdates();
             std::snprintf(text, sizeof(text), "CHECK");
             break;
         case kGyroSensitivity:
-            // 0.1 to 5.0 in steps of 0.1
             if (step) gyro::SetSensitivity(float(StepRange(int(std::lround(gyro::Sensitivity() * 10.0f)), 1, 50, 1, step)) / 10.0f);
             std::snprintf(text, sizeof(text), "%.1f", gyro::Sensitivity());
             break;
         case kGyroInvertX:
         case kGyroInvertY: {
-            // kept with the gyro's other settings in android.toml, so not one of ToggleFlag's
             bool x = gyro::InvertX(), y = gyro::InvertY();
             if (step) (id == kGyroInvertX ? x : y) ^= true;
             if (step) gyro::SetInvert(x, y);
@@ -713,7 +709,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
         }
         case kLeftDeadzone:
         case kRightDeadzone: {
-            // 0% to 50% of the stick's travel in steps of 1, 0 leaves the game's own
             uint32_t& dz = id == kLeftDeadzone ? o.left_deadzone : o.right_deadzone;
             if (step) dz = uint32_t(StepRange(int(dz), 0, 50, 1, step));
             std::snprintf(text, sizeof(text), dz ? "%u%%" : "%u%% (DEFAULT)", dz);
@@ -721,7 +716,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
         }
         case kLeftSensitivity:
         case kRightSensitivity: {
-            // 0.1 to 3.0 in steps of 0.1
             float& s = id == kLeftSensitivity ? o.left_sensitivity : o.right_sensitivity;
             if (step) s = float(StepRange(int(std::lround(s * 10.0f)), 1, 30, 1, step)) / 10.0f;
             std::snprintf(text, sizeof(text), "%.1f", s);
@@ -731,7 +725,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             int count = int(std::size(game::kLanguages));
             int i = 0;
             while (i < count - 1 && o.language != game::kLanguages[i]) i++;
-            // past the languages this disc has no strings for; English and Indonesian are always there
             if (step) {
                 do i = StepIndex(i, step, count);
                 while (!game::LanguageAvailable(game::kLanguages[i]));
@@ -742,7 +735,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             break;
         }
         case kAutoUpdate:
-            // kept in the activity's preferences: it is read at launch, before the game's settings
             if (step) host::SetStartupCheck(!host::StartupCheck());
             std::snprintf(text, sizeof(text), "%s", OnOff(host::StartupCheck()));
             break;
@@ -795,6 +787,8 @@ void RestoreDefaults(int page) {
         o.unlock_levels = none.unlock_levels;
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
+        o.esp_targets = none.esp_targets;
+        o.esp_friendly_kind = none.esp_friendly_kind;
         o.esp_display = none.esp_display;
         o.esp_health = none.esp_health;
         o.esp_color = none.esp_color;
@@ -802,6 +796,7 @@ void RestoreDefaults(int page) {
         o.esp_green = none.esp_green;
         o.esp_blue = none.esp_blue;
         o.aimbot = none.aimbot;
+        o.aimbot_targets = none.aimbot_targets;
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
@@ -838,6 +833,8 @@ void RestoreDefaults(int page) {
     o.unlock_levels = keep.unlock_levels;
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
+    o.esp_targets = keep.esp_targets;
+    o.esp_friendly_kind = keep.esp_friendly_kind;
     o.esp_display = keep.esp_display;
     o.esp_health = keep.esp_health;
     o.esp_color = keep.esp_color;
@@ -845,6 +842,7 @@ void RestoreDefaults(int page) {
     o.esp_green = keep.esp_green;
     o.esp_blue = keep.esp_blue;
     o.aimbot = keep.aimbot;
+    o.aimbot_targets = keep.aimbot_targets;
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
@@ -894,7 +892,6 @@ int BindRow(const char* label, const std::vector<std::string>& keys, int capturi
         bool lit = capturing == i || ImGui::IsItemFocused() || ImGui::IsItemHovered();
         ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                                                   ImGui::GetColorU32(lit ? ImGuiCol_Header : ImGuiCol_FrameBg));
-        // key names as they are
         std::string value = keys[i];
         if (capturing == i) value = Ui("PRESS A KEY");
         else if (value == kUnbound) value = Ui(kUnbound);
@@ -936,7 +933,6 @@ void ValueRow(const Row& r) {
 void KeyRow(const Row& r) {
     int cleared = -1;
     int box = BindRow(r.label, KeyBoxes(size_t(r.id)), g_capture == r.id ? g_capture_slot : -1, cleared);
-    // a Delete that answered a capture is no clear
     if (cleared >= 0 && CaptureFree()) input::Bind(size_t(r.id), 0, cleared);
     if (box < 0 || !CaptureFree()) return;
     g_capture_slot = box;
@@ -977,25 +973,22 @@ void DrawWeapons() {
     constexpr int kColumns = 3;
     float gap = ImGui::GetStyle().ItemSpacing.x;
     float w = (ImGui::GetContentRegionAvail().x - gap * (kColumns - 1)) / kColumns;
-    // two groups (weapons.cpp sorts them): the game's own suppressors, then the rest; each starts a new row of columns
     struct GroupTitle {
-        const char* name;  // brighter
-        const char* hint;  // dim, beside it
+        const char* name;
+        const char* hint;
     };
     static const GroupTitle kGroupTitles[] = {{"SUPPORTED SUPPRESSOR", "PRESS Y TO TAKE IT OFF"},
                                               {"UNSUPPORTED SUPPRESSOR", "EXPERIMENTAL"}};
-    // the second group has two blocks, each with a dim heading of its own
     auto sub_title = [](const char* text) {
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
         ImGui::TextUnformatted(Ui(text).c_str());
         ImGui::PopStyleColor();
     };
     bool sound_only = false;
-    int group = -1, column = 0, variant = -1;  // variant: 0 the plain guns, 1 those with the suppressor (code bit 0x100)
+    int group = -1, column = 0, variant = -1;
     for (size_t i = 0; i < v.choices.size(); i++) {
         const weapons::Choice& c = v.choices[i];
         if (c.group == group && variant != ((c.type & 0x100) ? 1 : 0)) {
-            // the second block of a group starts on a row of its own
             variant = (c.type & 0x100) ? 1 : 0;
             column = 0;
             ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.15f));
@@ -1007,7 +1000,7 @@ void DrawWeapons() {
             column = 0;
             const GroupTitle& title = kGroupTitles[std::clamp(group, 0, 1)];
             ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.25f));
-            ImGui::TextUnformatted(Ui(title.name).c_str());  // the panel's own text colour
+            ImGui::TextUnformatted(Ui(title.name).c_str());
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, kDim);
             ImGui::TextUnformatted(Ui(title.hint).c_str());
@@ -1017,13 +1010,13 @@ void DrawWeapons() {
         }
         if (column++ % kColumns) ImGui::SameLine();
         ImGui::PushID(c.type);
-        if (c.held) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);  // in one of the two slots now
+        if (c.held) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
         if (ImGui::Button(c.label.c_str(), ImVec2(w, 0))) weapons::Give(c.type);
         if (c.held) ImGui::PopStyleColor();
         ImGui::PopID();
         sound_only = sound_only || c.sound_only;
     }
-    if (sound_only) {  // the star of those labels, under the last block
+    if (sound_only) {
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
         ImGui::TextUnformatted(Ui("* SILENCED SOUND ONLY").c_str());
         ImGui::PopStyleColor();
@@ -1076,11 +1069,10 @@ void DrawFooter(float em) {
 // in the rows' child: a finger dragged up or down scrolls them as a phone's lists do, then glides a little when it
 // lifts. Past half an em the press is the scroll's, so the row or weapon it came down on is not clicked
 void DragScroll(float em) {
-    constexpr float kFriction = 6.0f;  // of the glide's speed lost a second
+    constexpr float kFriction = 6.0f;
     static bool dragging = false;
-    static float glide = 0;  // pixels a second
+    static float glide = 0;
     ImGuiIO& io = ImGui::GetIO();
-    // the rows, not the scrollbar beside them: that drags as it always did
     bool inside = ImGui::GetCurrentWindow()->InnerRect.Contains(io.MouseClickedPos[0]);
     if (ImGui::IsMouseClicked(0)) {
         dragging = false;
@@ -1090,7 +1082,7 @@ void DragScroll(float em) {
         if (!dragging && std::fabs(ImGui::GetMouseDragDelta(0).y) > em * 0.5f) dragging = true;
         if (!dragging) return;
         ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
-        if (io.DeltaTime > 0) glide = (glide - io.MouseDelta.y / io.DeltaTime) * 0.5f;  // smoothed over frames
+        if (io.DeltaTime > 0) glide = (glide - io.MouseDelta.y / io.DeltaTime) * 0.5f;
         ImGui::ClearActiveID();
         return;
     }
@@ -1103,8 +1095,7 @@ void DragScroll(float em) {
     glide *= std::max(0.0f, 1.0f - kFriction * io.DeltaTime);
 }
 
-// the font's size as a share of the screen's height, and the most of its width the panel's fifty ems may take; the panel
-// is sized for a thumb: the smaller of the two wins, so a tall screen and a narrow one both fit
+// the font's size as a share of the screen's height, and the most of its width the panel's fifty ems may take
 constexpr float kUiHeightShare = 0.030f;
 constexpr float kUiWidthShare = 0.0192f;
 
@@ -1118,7 +1109,6 @@ void DrawPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 1.6f, em * 0.9f));
-    // taller buttons and rows with room between them: a thumb, not a mouse
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(em * 0.7f, em * 0.45f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(em * 0.6f, em * 0.25f));
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
@@ -1127,7 +1117,6 @@ void DrawPanel() {
         DrawTitle("CHEATS");
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
-        // a scrollbar a thumb can take, not the desktop's thin one
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.8f);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.5f);
@@ -1145,14 +1134,12 @@ void DrawPanel() {
     ImGui::PopStyleColor(int(std::size(kPanelColors)));
 }
 
-// the window's display's refresh rate, 0 when unreadable
 uint32_t RefreshRate() {
     SDL_Window* w = static_cast<SDL_Window*>(Window());
     const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(w ? SDL_GetDisplayForWindow(w) : SDL_GetPrimaryDisplay());
     return m && m->refresh_rate > 1 ? uint32_t(std::lround(m->refresh_rate)) : 0;
 }
 
-// as app::Pace, at this cap
 void PaceAt(uint32_t cap) {
     using clock = std::chrono::steady_clock;
     static clock::time_point next = clock::now();
@@ -1168,21 +1155,14 @@ void PaceAt(uint32_t cap) {
     while (clock::now() < next) std::this_thread::yield();
 }
 
-// the panel's own layout in ems: 80 wide, 50 tall, both scaled with the font
 constexpr float kPanelWideEms = 80.0f;
 constexpr float kPanelTallEms = 50.0f;
-constexpr float kPanelMargin = 1.08f;  // 8% slack, so the border is never flush against the screen edge
+constexpr float kPanelMargin = 1.08f;
 
-// the interface's scale: the display's smaller side against a 720p phone baseline gives the density (a 720p phone
-// and a 1440p tablet both get text that fills the same fraction of the screen), then capped so the panel still fits
-// both dimensions, and clamped so it never grows past a legible minimum or shrinks the panel below a phone's
 float InterfaceScale(ImGuiIO& io) {
-    // the unscaled font size, since GetFontSize() already includes the scale we are about to set
     float font_base = io.FontGlobalScale > 0.0f ? ImGui::GetFontSize() / io.FontGlobalScale : 16.0f;
-    // the panel's width and height in pixels at scale 1, then the largest scale that still fits both
     float fit_x = io.DisplaySize.x / (kPanelWideEms * font_base * kPanelMargin);
     float fit_y = io.DisplaySize.y / (kPanelTallEms * font_base * kPanelMargin);
-    // a 720p phone (the densest phone baseline) sits at 1.0; a 1080p phone at 1.5; a 1440p tablet at 2.0
     float density = std::min(io.DisplaySize.x, io.DisplaySize.y) / 720.0f;
     return std::clamp(std::min({density, fit_x, fit_y}), 0.7f, 2.5f);
 }
@@ -1194,7 +1174,6 @@ void PaceFrame() {
         Pace();
         return;
     }
-    // a few under, so a variable refresh display stays in its range and vsync never waits a whole refresh
     constexpr uint32_t kRefreshMargin = 3;
     uint32_t rate = RefreshRate();
     PaceAt(rate > kRefreshMargin ? rate - kRefreshMargin : 0);
@@ -1233,7 +1212,6 @@ const rows::Row* rows::Controller(size_t* count) {
 std::string rows::Value(const Row& row, int step) {
     if (row.kind == Kind::Bind) return KeyText(input::Binding(size_t(row.id)));
     if (row.id == kCredit) {
-        // a step on a link opens it
         const Credit* c = CreditOf(row);
         if (!c || !c->value) return " ";
         if (step && c->url) SDL_OpenURL(c->url);
@@ -1244,10 +1222,8 @@ std::string rows::Value(const Row& row, int step) {
 
 void rows::Defaults(int page) { RestoreDefaults(page); }
 
-// the recomp's own pages share one set of defaults, too much to undo from one of them
 bool rows::Restorable(int page) { return page == kKeyboardPage || page == kCheatsPage; }
 
-// the dynamic resolution's rows while it is on, RENDER RESOLUTION while it is off
 bool rows::Enabled(const Row& row) {
     if (row.kind != Kind::Value) return true;
     bool dynamic = game::Opt().dynamic_resolution;
@@ -1262,7 +1238,6 @@ bool rows::Enabled(const Row& row) {
 }
 
 bool rows::Opens(const Row& row) {
-    // the credits' rows have no arrows: the links open, the rest do nothing
     return row.kind == Kind::Value && (row.id == kTouchEdit || row.id == kCheckUpdates || row.id == kCredit);
 }
 
@@ -1282,9 +1257,7 @@ void DrawUi(double fps) {
     ImGuiIO& io = ImGui::GetIO();
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-    io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
-    // scale the interface to the device's screen: density from the smaller side against a 720p baseline, capped
-    // so the panel still fits both dimensions and clamped so it stays legible (see InterfaceScale)
+    io.KeyRepeatRate = 0.1f;
     io.FontGlobalScale = InterfaceScale(io);
     if (MenuOpen()) {
         PollCapture();
