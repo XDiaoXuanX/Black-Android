@@ -1,7 +1,9 @@
-// The cheats page's ESP LINES: each living enemy gets a box round it and a line to it from the bottom of the screen,
-// drawn over the finished frame with the view the scene was drawn with, in the colour chosen by esp_color (a preset
-// or the esp_red / esp_green / esp_blue custom rgb). AIMBOT: the view turns to the point on the living enemy nearest
-// the crosshair chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each frame, but never inside
+// The cheats page's ESP: each living enemy gets a box round it and a line to it from the bottom of the screen,
+// drawn over the finished frame with the view the scene was drawn with, in the colour chosen by esp_color (a
+// preset or the esp_red / esp_green / esp_blue custom rgb). The display can be chosen by esp_display
+// (BOTH / BOX / LINE), and esp_health shows a health bar above each enemy: green above 66% of the reference
+// max, yellow above 33%, red below. AIMBOT: the view turns to the point on the living enemy nearest the
+// crosshair chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each frame, but never inside
 // aimbot_deadzone
 #include <algorithm>
 #include <chrono>
@@ -21,6 +23,7 @@ namespace {
 // character: kind 1 an enemy (the game's aim assist takes only those), its position the one its update makes a
 // velocity of. The world is Y up: that update zeroes Y for the speed along the ground
 constexpr uint32_t kCharKind = 0xC4;
+constexpr uint32_t kCharHealth = 0x2F0;   // float, the enemy's current health (same field the player uses)
 constexpr uint32_t kCharPosition = 0xA0;
 constexpr uint32_t kCharDying = 0x384;
 constexpr uint32_t kEnemyKind = 1;
@@ -35,15 +38,14 @@ constexpr float kNear = 0.08f;       // clip w nearer than this is behind the ca
 constexpr float kThickness = 1.5f;   // lines of a 480 frame
 
 // aimbot target heights above the feet, chosen by aimbot_target:
-//   0 NECK: just under the chin. Between the neck hitbox (≈1.50) and the jaw (≈1.60): lethal like the head but
+//   0 NECK: just under the chin. Between the neck hitbox (~1.50) and the jaw (~1.60): lethal like the head but
 //     forgiving to the bob of a walking or crouching enemy that would make a 1.65 point float above the skull.
 //   1 BODY: the chest centre. Centre mass, less lethal than the neck but much easier to land while the target
 //     moves — the safe default for the player who wants hits, not just assists.
 //   2 LEGS: the thighs. Slows a sprinting enemy without the two-shot kill, at the cost of the head being far
 //     from the crosshair.
-//   3 HEAD: the headshot line, between the jaw (≈1.60) and the top of the skull (≈1.75). Most lethal, but the
-//     most sensitive to the bob of a walking or crouching enemy — a 1.68 point floats above a crouched skull,
-//     so it works best against standing, slow-moving targets.
+//   3 HEAD: the headshot line, between the jaw (~1.60) and the top of the skull (~1.75). Most lethal, but the
+//     most sensitive to the bob of a walking or crouching enemy.
 constexpr float kAimHeights[4] = {
     1.55f,  // NECK (default)
     1.15f,  // BODY
@@ -51,9 +53,9 @@ constexpr float kAimHeights[4] = {
     1.68f,  // HEAD
 };
 
-// the ESP line colours the preset row offers; menu.cpp holds the same list with names (kEspPresets) and must be
-// kept in sync with these — a preset picked there writes its rgb into esp_red / esp_green / esp_blue, and the
-// CUSTOM entry reads them straight (so any drift between the two shows up immediately as a different colour).
+// the ESP line colours the preset row offers; panel cheats.cpp holds the same list with names (kEspPresets)
+// and must be kept in sync with these — a preset picked there writes its rgb into esp_red / esp_green /
+// esp_blue, and the CUSTOM entry reads them straight.
 struct EspPreset {
     float r, g, b;
 };
@@ -69,18 +71,22 @@ constexpr EspPreset kEspPresets[] = {
 };
 constexpr size_t kEspPresetCount = sizeof(kEspPresets) / sizeof(kEspPresets[0]);
 
-// aimbot_pull and aimbot_deadzone are read from Opt() every frame:
-//   pull = aimbot_pull / 100 (1% to 100% of the angle to the target, each frame). 15% the default: a gentle
-//     assist the mouse still wins against, so the crosshair can be slid off one enemy and onto the next.
-//   deadzone = aimbot_deadzone / 10 degrees (0.0° to 30.0°). Inside it the aimbot does not turn, leaving the
-//     player free to move the crosshair; a larger deadzone makes switching to another enemy easier, a smaller
-//     one keeps the crosshair locked on the current target.
 constexpr float kCone = 30.0f;       // degrees from the crosshair an enemy is taken in
 constexpr float kDegrees = 180.0f / 3.14159265f;
 
 // an enemy is drawn while its update ran this recently: none once the game pauses, no flicker between ticks
 constexpr auto kSeen = std::chrono::milliseconds(250);
 constexpr size_t kMaxEnemies = 64;
+
+// Health bar reference: an enemy with this much health or more shows a full bar. Common Call of Duty Classic
+// enemies have roughly 100-250 HP; elites go higher. 250 is a sensible visual reference so a typical soldier
+// starts around two-thirds to full, giving room to see it drop.
+constexpr float kEnemyRefHealth = 250.0f;
+
+// Health bar colours at the three thresholds (green >66%, yellow 33-66%, red <33%)
+constexpr float kHealthColourHigh[4] = {0.20f, 0.90f, 0.20f, 1.0f};
+constexpr float kHealthColourMid[4] = {1.00f, 0.85f, 0.10f, 1.0f};
+constexpr float kHealthColourLow[4] = {1.00f, 0.20f, 0.20f, 1.0f};
 
 struct Seen {
     uint32_t who;
@@ -100,13 +106,16 @@ constexpr uint32_t kTriangles = 0xD5A00;
 struct Vertex {
     float x, y;
 };
-constexpr size_t kSegments = 5;  // the line and the box's four sides
-constexpr size_t kMaxVertices = kMaxEnemies * kSegments * 6;
 
-// the ESP colour as it was last written into `colours`, and the flag that forces a refresh the first time
-// DrawEsp runs: g_colour_dirty is set once so the buffer starts with whatever game::Opt() has, then cleared.
+// Per-enemy vertex budget: line (6) + 4 box sides (24) + health background (6) + health fill (6) = 42 verts =
+// 14 triangles. Allocating for the maximum keeps the buffers a fixed size regardless of the display mode.
+constexpr size_t kVertsPerEnemy = 42;
+constexpr size_t kMaxVertices = kMaxEnemies * kVertsPerEnemy;
+
+// the ESP colour as it was last written, tracked so the caller can tell when the user's preset moved
+// (kept for diagnostic parity with the original single-colour build; the actual per-vertex writes below use
+// the freshly read colour each frame)
 float g_colour[4] = {0.88f, 0.86f, 0.82f, 1.0f};
-bool g_colour_dirty = true;
 
 void Remember(uint32_t who) {
     auto now = std::chrono::steady_clock::now();
@@ -126,8 +135,7 @@ void Remember(uint32_t who) {
     *oldest = {who, now};
 }
 
-// fills `out` with the rgba the ESP lines should use: a preset, or the custom rgb divided by 255. Lives in the
-// anonymous namespace, so game::Opt() must be spelled out — a bare Opt() would not resolve here.
+// fills `out` with the rgba the ESP lines should use: a preset, or the custom rgb divided by 255
 void CurrentColour(float out[4]) {
     const game::Options& opts = game::Opt();
     uint32_t preset = opts.esp_color;
@@ -163,15 +171,20 @@ bool Project(const float p[3], float vx, float vy, float vw, float vh, float out
     return true;
 }
 
-// a segment as a quad of two triangles, its width across it
-Vertex* Segment(Vertex* v, float x0, float y0, float x1, float y1, float width) {
+// Writes one segment (6 vertices, 2 triangles) to the vertex buffer at *v, and its 6 colours at *c.
+// Both pointers advance by 6 entries: 6 vertices of 8 bytes, 6 colours of 16 bytes.
+void WriteSegment(Vertex*& v, uint8_t*& c, float x0, float y0, float x1, float y1, float width,
+                  const float colour[4]) {
     float dx = x1 - x0, dy = y1 - y0;
     float length = std::sqrt(dx * dx + dy * dy);
-    if (!(length > 0)) return v;
+    if (!(length > 0)) return;
     float nx = -dy / length * width * 0.5f, ny = dx / length * width * 0.5f;
-    const float corner[4][2] = {{x0 + nx, y0 + ny}, {x0 - nx, y0 - ny}, {x1 + nx, y1 + ny}, {x1 - nx, y1 - ny}};
-    for (int i : {0, 1, 2, 2, 1, 3}) *v++ = {corner[i][0], corner[i][1]};
-    return v;
+    const float corners[4][2] = {{x0 + nx, y0 + ny}, {x0 - nx, y0 - ny}, {x1 + nx, y1 + ny}, {x1 - nx, y1 - ny}};
+    for (int i : {0, 1, 2, 2, 1, 3}) {
+        *v++ = {corners[i][0], corners[i][1]};
+        std::memcpy(c, colour, 16);
+        c += 16;
+    }
 }
 
 }  // namespace
@@ -227,35 +240,32 @@ void Aimbot(X86Context& ctx) {
 
 // D3DVIEWPORT8: x, y, width, height. Called between the 2D layer's begin and end
 void DrawEsp(X86Context& ctx, float unit) {
-    if (!Opt().esp || !g_camera || !R32(kWorld)) return;
+    const game::Options& opts = Opt();
+    if (!opts.esp || !g_camera || !R32(kWorld)) return;
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
     // the vertex buffer, its call offset, and the per-vertex colour array: 16 bytes (4 floats) for each of the
-    // kMaxVertices vertices, uninitialised on purpose — the block below fills it the first time DrawEsp runs and
-    // whenever the colour in Opt() changes, so a frame with no change costs nothing
+    // kMaxVertices vertices. Colours are written per-vertex as vertices are emitted, so a health bar can use its
+    // own green/yellow/red palette while the box and line keep the user's ESP colour.
     static const uint32_t buffer = mem::AllocSystem(kMaxVertices * sizeof(Vertex), 16);
     static const uint32_t offset = mem::AllocSystem(8, 16);
     static const uint32_t colours = mem::AllocSystem(kMaxVertices * sizeof(float) * 4, 16);
-    // refresh the per-vertex colour whenever the preset or the custom rgb has moved since the last frame. The
-    // comparison is on floats, safe here because they are only ever compared with values that were produced
-    // from uint8 / preset constants — no NaN, no precision drift
-    {
-        float new_colour[4];
-        CurrentColour(new_colour);
-        if (g_colour_dirty ||
-            new_colour[0] != g_colour[0] || new_colour[1] != g_colour[1] ||
-            new_colour[2] != g_colour[2] || new_colour[3] != g_colour[3]) {
-            std::memcpy(g_colour, new_colour, sizeof(g_colour));
-            for (size_t i = 0; i < kMaxVertices; i++)
-                std::memcpy(HostPtr(colours + i * sizeof(g_colour)), g_colour, sizeof(g_colour));
-            g_colour_dirty = false;
-        }
-    }
+    // the ESP colour the user chose, as rgba, refreshed every frame (cheap: one call to CurrentColour)
+    float espColour[4];
+    CurrentColour(espColour);
+    std::memcpy(g_colour, espColour, sizeof(g_colour));
+
     Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
     Vertex* v = first;
+    uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
     float width = kThickness * unit;
     auto now = std::chrono::steady_clock::now();
+    // display: 0 = BOTH, 1 = BOX, 2 = LINE. Health bar draws on top, gated by esp_health.
+    uint32_t display = opts.esp_display < 3 ? opts.esp_display : 0;
+    bool show_box = (display == 0 || display == 1);
+    bool show_line = (display == 0 || display == 2);
+    bool show_health = opts.esp_health;
     size_t kept = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
@@ -268,11 +278,41 @@ void DrawEsp(X86Context& ctx, float unit) {
         if (!Project(feet, vx, vy, vw, vh, f) || !Project(head, vx, vy, vw, vh, h)) continue;
         float half = (f[1] - h[1]) * kBoxWidth * 0.5f;
         float left = f[0] - half, right = f[0] + half;
-        v = Segment(v, vx + vw * 0.5f, vy + vh, f[0], f[1], width);
-        v = Segment(v, left, h[1], right, h[1], width);
-        v = Segment(v, left, f[1], right, f[1], width);
-        v = Segment(v, left, h[1], left, f[1], width);
-        v = Segment(v, right, h[1], right, f[1], width);
+        if (show_line) {
+            WriteSegment(v, c, vx + vw * 0.5f, vy + vh, f[0], f[1], width, espColour);
+        }
+        if (show_box) {
+            WriteSegment(v, c, left, h[1], right, h[1], width, espColour);
+            WriteSegment(v, c, left, f[1], right, f[1], width, espColour);
+            WriteSegment(v, c, left, h[1], left, f[1], width, espColour);
+            WriteSegment(v, c, right, h[1], right, f[1], width, espColour);
+        }
+        if (show_health) {
+            // health bar above the head: same width as the box, 8% of box height as bar thickness,
+            // small gap above the head
+            float boxHeight = f[1] - h[1];
+            float barHeight = boxHeight * 0.08f;
+            float barY = h[1] - barHeight - boxHeight * 0.02f;
+            float barLeft = left;
+            float barRight = right;
+            float barWidth = barRight - barLeft;
+            // read health and clamp: any NaN / negative shows as empty
+            float hp = G<float>(who + kCharHealth);
+            if (!std::isfinite(hp) || hp < 0) hp = 0;
+            float ratio = std::min(hp / kEnemyRefHealth, 1.0f);
+            // background: full-width bar in a dim version of the ESP colour, so it stays visible but does not
+            // compete with the fill
+            float bgColour[4] = {espColour[0] * 0.3f, espColour[1] * 0.3f, espColour[2] * 0.3f, 0.85f};
+            WriteSegment(v, c, barLeft, barY, barRight, barY, barHeight, bgColour);
+            // fill: proportional width, colour by threshold
+            if (ratio > 0.001f) {
+                const float* fillColour = ratio > 0.66f ? kHealthColourHigh
+                                     : ratio > 0.33f ? kHealthColourMid
+                                     : kHealthColourLow;
+                float fillRight = barLeft + barWidth * ratio;
+                WriteSegment(v, c, barLeft, barY, fillRight, barY, barHeight, fillColour);
+            }
+        }
     }
     g_count = kept;
     if (v == first) return;
@@ -293,6 +333,7 @@ void DrawEsp(X86Context& ctx, float unit) {
 X86_EXTERN_FUNC(__imp__sub_001DFD90);
 X86_FUNC(sub_001DFD90) {
     uint32_t who = ctx.ecx;
-    if ((game::Opt().esp || game::Opt().aimbot) && who && R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying)) Remember(who);
+    if ((game::Opt().esp || game::Opt().aimbot) && who && R32(who + kCharKind) == kEnemyKind && !R32(who + kCharDying))
+        Remember(who);
     __imp__sub_001DFD90(ctx, base);
 }
