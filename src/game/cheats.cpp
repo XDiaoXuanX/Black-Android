@@ -47,6 +47,10 @@ constexpr float kFullHealth[] = {1200.0f, 750.0f};
 //   frame N+X : ExtraRapidFire runs (after update) → clears animation → flag back to false
 //   frame N+X+1: game sees animation idle, throw button still held → new throw starts
 //   cycle repeats every ~X frames, where X is the animation's natural release frame (~20-30 at 60 fps)
+//
+// GRENADES NO LONGER REQUIRE A RAPID_FIRE LEVEL: they work with RAPID FIRE EXTRA + INFINITE GRENADES alone.
+// The slow-fire weapon path still needs rapid_fire > 1 (OFF disables it); the grenade path is independent,
+// so turning RAPID FIRE OFF does not stop continuous grenade spam.
 // This gives 2-3 throws per second (frame-rate limited only by the animation's own release timing, not by a
 // fixed recovery window). If it turns out the game is edge-triggered (needs a release + re-press between
 // throws), the animation clear would allow it but each throw would still need the player to tap the button;
@@ -133,14 +137,31 @@ bool SlowFireHeld(uint32_t weapon) {
     return kSlowCodes.count(code) != 0;
 }
 
-// Called from the player's update AFTER the game's own update (see sub_001E5FA0 below). Runs two jobs:
-//  (1) Slow fire weapons: throttled by rapid_fire level (unchanged from the recovery-window version).
-//  (2) Grenades: clear the throw animation and the busy flag exactly once per throw event, immediately
-//      after the event fires. This is the minimum work needed to allow the next throw without breaking
-//      the animation that must complete to actually release the grenade.
+// Called from the player's update AFTER the game's own update (see sub_001E5FA0 below). Runs two jobs
+// that are now INDEPENDENT of each other:
+//  (1) Slow-fire weapons (RPG, GRL, SNR, SN5): throttled by rapid_fire level. Needs rapid_fire_extra +
+//      rapid_fire > 1. Turning rapid_fire OFF disables this branch.
+//  (2) Grenades: continuous throw, no pause, no delay. Needs rapid_fire_extra + infinite_grenades ALONE.
+//      No rapid_fire level is required, so rapid_fire = OFF does not stop grenade spam.
+//
+// Grenade flow (frame-rate continuous, no recovery window):
+//   frame N    : player holds throw, animation starts
+//   frame N+X  : animation reaches release, sub_001E8830 fires → count drop → g_throw_just_fired = true
+//   frame N+X  : ExtraRapidFire (this function) runs right after the game update → clears the throw
+//                animation, the weapon animation and the busy flag — the clears are the LAST writes of
+//                the frame
+//   frame N+X+1: game sees the character idle with the throw button still held → new throw starts
+//   cycle repeats every ~X frames (the animation's own release timing, ~20-30 at 60 fps), so grenades
+//   spam at frame rate with no input recovery window
 void ExtraRapidFire() {
     const game::Options& o = game::Opt();
-    if (!o.rapid_fire_extra || o.rapid_fire <= 1) {
+
+    // Grenades need rapid_fire_extra + infinite_grenades only — no rapid_fire level required.
+    // Slow-fire weapons need rapid_fire_extra + rapid_fire > 1.
+    bool grenades_on = o.rapid_fire_extra && o.infinite_grenades;
+    bool slowfire_on = o.rapid_fire_extra && o.rapid_fire > 1;
+
+    if (!grenades_on && !slowfire_on) {
         g_throw_just_fired = false;
         g_slowfire_counter = kMaxRapidLevel;
         return;
@@ -158,31 +179,47 @@ void ExtraRapidFire() {
         return;
     }
 
-    // (1) Slow-fire weapons — throttled by rapid_fire level, unchanged
-    g_slowfire_counter -= int(o.rapid_fire);
-    if (g_slowfire_counter <= 0) {
-        g_slowfire_counter = kMaxRapidLevel;
-        if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
-            uint32_t weapon = R32(inv + kInvHeld);
-            if (weapon && SlowFireHeld(weapon)) {
-                W32(weapon + kWeaponAnim, 0);
+    // (1) Slow-fire weapons — throttled by rapid_fire level, only when slowfire_on
+    if (slowfire_on) {
+        g_slowfire_counter -= int(o.rapid_fire);
+        if (g_slowfire_counter <= 0) {
+            g_slowfire_counter = kMaxRapidLevel;
+            if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
+                uint32_t weapon = R32(inv + kInvHeld);
+                if (weapon && SlowFireHeld(weapon)) {
+                    W32(weapon + kWeaponAnim, 0);
+                }
             }
         }
+    } else {
+        g_slowfire_counter = kMaxRapidLevel;
     }
 
-    // (2) Grenade — clear exactly once per throw event (right after the release). The safety check on the
-    // animation value prevents clearing anything larger than 0x1000, which would be a pointer rather than
-    // an animation id (would crash the game if we wrote 0 to it).
-    if (o.infinite_grenades && g_throw_just_fired.exchange(false)) {
-        uint32_t held = R32(inv + kInvHeld);
-        if (held) {
-            uint32_t hv = R32(held + kWeaponAnim);
-            if (hv < 0x1000) W32(held + kWeaponAnim, 0);
+    // (2) Grenades — continuous throwing, independent of rapid_fire level. Works with rapid_fire_extra
+    // + infinite_grenades alone. Each time a release fires (sub_001E8830 sees the count drop and sets
+    // g_throw_just_fired), clear the throw animation, the weapon animation and the busy flag. The game
+    // then sees the character idle with the throw button still held and starts the next throw the next
+    // frame — no pause, no delay, no recovery window. The animation value check (< 0x1000) prevents
+    // clearing a pointer by mistake.
+    if (grenades_on) {
+        // Safety net: keep at least one grenade available so the next throw can start even if the game
+        // somehow drained the count without sub_001E8830 seeing it (defensive, normally redundant).
+        uint16_t& nades = G<uint16_t>(me + kCharGrenades);
+        if (nades < 1) nades = 1;
+
+        if (g_throw_just_fired.exchange(false)) {
+            uint32_t held = R32(inv + kInvHeld);
+            if (held) {
+                uint32_t hv = R32(held + kWeaponAnim);
+                if (hv < 0x1000) W32(held + kWeaponAnim, 0);
+            }
+            uint32_t mv = R32(me + kWeaponAnim);
+            if (mv < 0x1000) W32(me + kWeaponAnim, 0);
+            uint32_t busy = R32(inv + kInvBusy);
+            if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
         }
-        uint32_t mv = R32(me + kWeaponAnim);
-        if (mv < 0x1000) W32(me + kWeaponAnim, 0);
-        uint32_t busy = R32(inv + kInvBusy);
-        if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
+    } else {
+        g_throw_just_fired = false;
     }
 }
 
@@ -226,6 +263,10 @@ X86_FUNC(sub_001E74B0) {
 // hook runs INSIDE the game's player update, and clearing mid-update would be overwritten by the game's own
 // animation state machine (sub_0017B130 in hooks.cpp). Doing it in ExtraRapidFire after the update makes the
 // clear the last write of the frame and lets the game start the next frame with animation = 0.
+//
+// The g_throw_just_fired flag is set ONLY when rapid_fire_extra is on; the grenade path in ExtraRapidFire
+// then consumes it (with infinite_grenades also on). rapid_fire > 1 is NOT required for the flag — grenades
+// work with rapid_fire_extra + infinite_grenades alone.
 X86_EXTERN_FUNC(__imp__sub_001E8830);
 X86_FUNC(sub_001E8830) {
     uint32_t who = R32(ctx.esp + 0xC);
