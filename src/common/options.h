@@ -51,17 +51,15 @@ struct Options {
     // cheat: times the player's rate of fire, 1 the game's. The panel offers these discrete values via
     // kRapidFireLevels / kRapidFireNames in the cheats panel:
     //   OFF, 2X, 3X, 4X, 5X, 6X, 7X, 8X, 16X, 32X, 64X, 128X, 256X, 512X, INFINITE (999)
-    // Any value >= 2 makes the src/game/cheats.cpp ExtraRapidFire() clear every fire / throw cooldown every
-    // frame, so the practical rate is limited only by how fast the game engine can process a new projectile
-    // (one per frame). The multiplier is therefore a label, not a mathematical cap — 2X and INFINITE give the
-    // same observable rate. 999 is the "INFINITE" sentinel; anything else between 2 and 512 exists so the
-    // user can pick whatever number looks right without there being a hard ceiling.
+    // hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire: with INFINITE (999) the wait is
+    // effectively zero → one projectile per frame (frame-rate continuous fire). With values 2..8 the wait is
+    // divided the usual way, subject to the game's fire-mode pacing.
     uint32_t rapid_fire = 1;
     // cheat: rapid fire also reaches the four slow fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) and,
     // with infinite_grenades also on, the grenade throw. The four weapons keep their pacing in their own first
-    // person animation, and the grenade throw in the character's own animation; when this is on and
-    // rapid_fire is any level above 1 (2X through INFINITE), those animations are cleared every frame, so the
-    // game accepts the next trigger pull (or throw) straight away — continuous, no throttle, no delay.
+    // person animation, and the grenade throw in a recovery animation; when this is on and rapid_fire is any
+    // non-OFF level, those animations are cleared at a fraction of the frames proportional to rapid_fire, so
+    // the game accepts the next trigger pull (or throw) sooner — recovery-window version.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
@@ -72,38 +70,19 @@ struct Options {
     bool infinite_medkits = false;  // cheat: using a medkit keeps the count (src/game/weapons.cpp)
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
-    bool esp = false;  // cheat: the ESP master toggle; what it draws is picked by esp_display / esp_fill
-    // cheat: which ESP elements to draw, using 5 bit flags combined:
-    //   bit 0 (1)  = box round each living enemy (rectangular outline)
-    //   bit 1 (2)  = line to it from the bottom of the screen
-    //   bit 2 (4)  = health bar above its head
-    //   bit 3 (8)  = body silhouette — eight stacked tinted quads following the character's head/torso/leg
-    //                proportions, giving body-only detection without a rectangular box
-    //   bit 4 (16) = x-ray modifier on the body silhouette: alpha 30%→55%, bright spine line from feet to
-    //                head, colour brightened ~30% + 0.15 per channel. Only has visible effect when the body
-    //                is shown, so when bit 4 is set the body bit (bit 3) is IMPLIED in the renderer. The
-    //                panel's ESP MODE only steps 0–23 (the eight sensible x-ray variants), and any 24–31
-    //                value from an older config is remapped to 16–23 on the next frame.
-    // The 24 modes the panel offers:
-    //   0 = OFF                 1 = BOX                   2 = LINE                  3 = BOX + LINE
-    //   4 = HEALTH              5 = BOX + HEALTH          6 = LINE + HEALTH         7 = ALL (default)
-    //   8 = BODY                9 = BODY + BOX           10 = BODY + LINE          11 = BODY + BOX + LINE
-    //  12 = BODY + HEALTH      13 = BODY + BOX + HEALTH  14 = BODY + LINE + HEALTH 15 = ALL + BODY
-    //  16 = BODY XRAY          17 = BODY XRAY + BOX      18 = BODY XRAY + LINE     19 = BODY XRAY + BOX + LINE
-    //  20 = BODY XRAY + HEALTH 21 = BODY XRAY + BOX + HEALTH 22 = BODY XRAY + LINE + HEALTH 23 = ALL + BODY XRAY
-    // Health bar fill goes green above 66% of kEnemyRefHealth (esp.cpp, 250 HP = full), yellow above 33%,
-    // red below. Body silhouette alpha is kFillAlpha (30%), bumped to kXrayBodyAlpha (55%) when bit 4 is on.
-    uint32_t esp_display = 7;
-    // cheat: fill the enemy's entire head-to-feet bounding box with a semi-transparent tint of the ESP colour
-    // (30% opacity). This is a plain rectangular fill of the whole hitbox, separate from the body silhouette
-    // that bit 3 of esp_display draws; it can be combined with any esp_display value. The colour is the same
-    // one picked by esp_color / esp_red / esp_green / esp_blue. Requires the esp master toggle on.
-    bool esp_fill = false;
-    // cheat: colour of the ESP box, line, body silhouette, fill, and health bar background. 0..7 a preset from
-    // kEspPresets (WHITE, RED, GREEN, CYAN, YELLOW, MAGENTA, ORANGE, PURPLE), 8 CUSTOM: the esp_red /
-    // esp_green / esp_blue below. Stepping the preset writes its colour into those three fields, and any manual
-    // change of them switches the preset back to CUSTOM, so the two always agree — the row shows a preset name
-    // while the number is one of the eight, CUSTOM otherwise.
+    bool esp = false;  // cheat: the ESP master toggle; what it draws is picked by esp_display below
+    // cheat: which ESP elements to draw. Bit 0 (1) = line from the bottom of the screen to the enemy's feet,
+    // bit 1 (2) = health bar above its head. Values:
+    //   0 = OFF        1 = LINE       2 = HEALTH       3 = LINE + HEALTH (default)
+    // The health bar's fill colour is green above 66% of the reference max, yellow above 33%, red below;
+    // the reference is kEnemyRefHealth in esp.cpp (250 HP = full bar). The bar's background uses the ESP
+    // colour at 30% brightness, the fill uses its own green/yellow/red palette.
+    uint32_t esp_display = 3;
+    // cheat: colour of the ESP line and health bar background. 0..7 a preset from kEspPresets (WHITE, RED,
+    // GREEN, CYAN, YELLOW, MAGENTA, ORANGE, PURPLE), 8 CUSTOM: the esp_red / esp_green / esp_blue below.
+    // Stepping the preset writes its colour into those three fields, and any manual change of them switches
+    // the preset back to CUSTOM, so the two always agree — the row shows a preset name while the number is
+    // one of the eight, CUSTOM otherwise.
     uint32_t esp_color = 0;
     uint32_t esp_red = 224;    // 0..255, custom red    (224/255 ≈ 0.88, the soft white the ESP shipped with)
     uint32_t esp_green = 219;  // 0..255, custom green  (219/255 ≈ 0.86)
