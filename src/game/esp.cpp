@@ -1,10 +1,12 @@
 // The cheats page's ESP: each living enemy can show a box round it, a line to it from the bottom of the screen,
-// and a health bar above its head — chosen by esp_display's bit flags (bit 0 = box, bit 1 = line, bit 2 =
-// health), drawn over the finished frame with the view the scene was drawn with, in the colour chosen by
-// esp_color (a preset or the esp_red / esp_green / esp_blue custom rgb). The health bar's fill goes green
-// above 66% of the reference max, yellow above 33%, red below. AIMBOT: the view turns to the point on the
-// living enemy nearest the crosshair chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each
-// frame, but never inside aimbot_deadzone.
+// a health bar above its head — chosen by esp_display's bit flags (bit 0 = box, bit 1 = line, bit 2 = health) —
+// plus optional extras that work independently of esp_display: esp_body (body-shaped silhouette fill — head,
+// torso, legs — with NO rectangular box outline, so enemies are "detected" by tint alone) and esp_fill (a
+// semi-transparent tint over the whole head-to-feet box, rectangular). All use the colour picked by esp_color
+// (preset or esp_red / esp_green / esp_blue). The health bar's fill goes green above 66% of the reference max,
+// yellow above 33%, red below. AIMBOT: the view turns to the point on the living enemy nearest the crosshair
+// chosen by aimbot_target (neck, body, legs or head), by aimbot_pull each frame, but never inside
+// aimbot_deadzone.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -36,6 +38,34 @@ constexpr float kHeight = 1.8f;      // world units are metres: the near plane i
 constexpr float kBoxWidth = 0.45f;   // of the box's height
 constexpr float kNear = 0.08f;       // clip w nearer than this is behind the camera
 constexpr float kThickness = 1.5f;   // lines of a 480 frame
+
+// fill overlay alpha: 0.30 = 30% opacity so the enemy silhouette stays visible through the tint. If the game
+// does not apply alpha blending in its 2D path, the fill renders opaque and the user can approximate the same
+// effect by picking a dark CUSTOM colour. Both the body silhouette and the whole-box fill use this alpha.
+constexpr float kFillAlpha = 0.30f;
+
+// The body silhouette is drawn as 8 stacked filled quads (head → feet). Each segment has a bottom_frac and
+// top_frac (relative to kHeight, 0 = feet, 1.0 = top of head) and a width_frac (relative to the character's
+// full box width at that height). Widths vary so the silhouette follows a rough human contour: narrow at the
+// very top (head), medium at the face and neck, widest at the chest/shoulders, slightly narrower at the waist,
+// tapering down through the legs, and narrowest at the feet. The segments abut exactly (no gap, no overlap) so
+// the silhouette looks like one continuous tinted shape with no seams. Widths chosen to approximate a real
+// standing human silhouette (head ≈ 15% of height, shoulders ≈ 40–45%, hips ≈ 30%, feet ≈ 25%).
+struct BodySegment {
+    float bottom_frac;
+    float top_frac;
+    float width_frac;  // relative to the character's full box width
+};
+constexpr BodySegment kBodySegments[] = {
+    {0.94f, 1.00f, 0.35f},  // top of head (narrow)
+    {0.88f, 0.94f, 0.55f},  // face
+    {0.80f, 0.88f, 0.45f},  // neck / collar (narrower than face)
+    {0.60f, 0.80f, 0.95f},  // torso / chest (widest — shoulders and arms)
+    {0.50f, 0.60f, 0.90f},  // waist / hips (slightly narrower than chest)
+    {0.25f, 0.50f, 0.75f},  // upper legs
+    {0.10f, 0.25f, 0.60f},  // lower legs
+    {0.00f, 0.10f, 0.55f},  // feet / ankles
+};
 
 // aimbot target heights above the feet, chosen by aimbot_target:
 //   0 NECK: just under the chin. Between the neck hitbox (~1.50) and the jaw (~1.60): lethal like the head but
@@ -107,9 +137,15 @@ struct Vertex {
     float x, y;
 };
 
-// Per-enemy vertex budget: line (6) + 4 box sides (24) + health background (6) + health fill (6) = 42 verts.
-// Allocating for the maximum keeps the buffers a fixed size regardless of the display mode.
-constexpr size_t kVertsPerEnemy = 42;
+// Per-enemy vertex budget:
+//   fill (whole box)  : 6
+//   body silhouette   : 8 segments × 6 = 48
+//   line              : 6
+//   box outline       : 24 (4 sides × 6)
+//   health bar        : 12 (bg + fill)
+//   total max         : 96
+// Allocating for the maximum keeps the buffers a fixed size regardless of the mode.
+constexpr size_t kVertsPerEnemy = 120;
 constexpr size_t kMaxVertices = kMaxEnemies * kVertsPerEnemy;
 
 void Remember(uint32_t who) {
@@ -182,6 +218,26 @@ void WriteSegment(Vertex*& v, uint8_t*& c, float x0, float y0, float x1, float y
     }
 }
 
+// Writes one filled quad (6 vertices, 2 triangles) with corners TL(x0,y0), BL(x0,y1), BR(x1,y1), TR(x1,y0).
+// Same vertex/colour advance as WriteSegment.
+void WriteQuad(Vertex*& v, uint8_t*& c, float x0, float y0, float x1, float y1, const float colour[4]) {
+    const float corners[4][2] = {{x0, y0}, {x0, y1}, {x1, y1}, {x1, y0}};
+    for (int i : {0, 1, 2, 0, 2, 3}) {
+        *v++ = {corners[i][0], corners[i][1]};
+        std::memcpy(c, colour, 16);
+        c += 16;
+    }
+}
+
+// Writes one rectangle outline (4 sides, 24 vertices). Used for the box outline bit in esp_display.
+void WriteRect(Vertex*& v, uint8_t*& c, float sx_left, float sx_right, float sy_top, float sy_bottom,
+               float width, const float colour[4]) {
+    WriteSegment(v, c, sx_left,  sy_top,    sx_right, sy_top,    width, colour);  // top edge
+    WriteSegment(v, c, sx_left,  sy_bottom, sx_right, sy_bottom, width, colour);  // bottom edge
+    WriteSegment(v, c, sx_left,  sy_top,    sx_left,  sy_bottom, width, colour);  // left side
+    WriteSegment(v, c, sx_right, sy_top,    sx_right, sy_bottom, width, colour);  // right side
+}
+
 }  // namespace
 
 namespace game {
@@ -228,7 +284,10 @@ void Aimbot(X86Context& ctx) {
 }
 
 // D3DVIEWPORT8: x, y, width, height. Called between the 2D layer's begin and end. Bit flags in esp_display:
-// bit 0 = box, bit 1 = line, bit 2 = health bar; each element draws independently.
+// bit 0 = box, bit 1 = line, bit 2 = health bar. esp_body and esp_fill are separate toggles. Fill draws first
+// (so outlines stay crisp over it), then the body silhouette (no outlines — it is filled in segments that
+// follow the enemy's proportions, giving head-to-feet detection without a box), then the box/line, then the
+// health bar on top.
 void DrawEsp(X86Context& ctx, float unit) {
     const game::Options& opts = Opt();
     if (!opts.esp || !g_camera || !R32(kWorld)) return;
@@ -237,50 +296,76 @@ void DrawEsp(X86Context& ctx, float unit) {
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
     // the vertex buffer, its call offset, and the per-vertex colour array: 16 bytes (4 floats) for each of the
     // kMaxVertices vertices. Colours are written per-vertex as vertices are emitted, so the health bar can use
-    // its own green/yellow/red palette while the box and line keep the user's ESP colour.
+    // its own green/yellow/red palette while the box/line/body/fill keep the user's ESP colour.
     static const uint32_t buffer = mem::AllocSystem(kMaxVertices * sizeof(Vertex), 16);
     static const uint32_t offset = mem::AllocSystem(8, 16);
     static const uint32_t colours = mem::AllocSystem(kMaxVertices * sizeof(float) * 4, 16);
-    // the ESP colour the user chose, as rgba
+    // the ESP colour the user chose, as rgba, and its fill variant (same rgb, reduced alpha)
     float espColour[4];
     CurrentColour(espColour);
+    float fillColour[4] = {espColour[0], espColour[1], espColour[2], kFillAlpha};
 
     Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
     Vertex* v = first;
     uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
     float width = kThickness * unit;
     auto now = std::chrono::steady_clock::now();
-    // the display mode: bit 0 = box, bit 1 = line, bit 2 = health bar
+    // the display mode: bit 0 = box, bit 1 = line, bit 2 = health bar; body and fill are separate toggles
     uint32_t display = opts.esp_display < 8 ? opts.esp_display : 7;
     bool show_box = (display & 1) != 0;
     bool show_line = (display & 2) != 0;
     bool show_health = (display & 4) != 0;
+    bool show_body = opts.esp_body;
+    bool show_fill = opts.esp_fill;
     size_t kept = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         g_seen[kept++] = g_seen[i];
-        if (!show_box && !show_line && !show_health) continue;
+        if (!show_box && !show_line && !show_health && !show_body && !show_fill) continue;
         const float* at = &G<float>(who + kCharPosition);
         float feet[3] = {at[0], at[1], at[2]};
         float head[3] = {at[0], at[1] + kHeight, at[2]};
         float f[2], h[2];
         if (!Project(feet, vx, vy, vw, vh, f) || !Project(head, vx, vy, vw, vh, h)) continue;
-        float half = (f[1] - h[1]) * kBoxWidth * 0.5f;
+        // the enemy's full on-screen box height and full character box width — used by the body silhouette
+        // so segment widths scale with the character regardless of the camera's pitch/yaw
+        float full_h_screen = f[1] - h[1];
+        float char_width_screen = full_h_screen * kBoxWidth;
+        float half = char_width_screen * 0.5f;
         float left = f[0] - half, right = f[0] + half;
+        // whole-box fill first, so silhouettes and outlines draw on top of it
+        if (show_fill) {
+            WriteQuad(v, c, left, h[1], right, f[1], fillColour);
+        }
+        // body silhouette: 8 stacked filled quads with varying widths, tracing a rough human outline from
+        // head to feet. No rectangles outside the body; no outlines at all. This is the "detect body without
+        // box" mode — the enemy's body area is tinted with the ESP colour at kFillAlpha opacity.
+        if (show_body) {
+            for (const BodySegment& seg : kBodySegments) {
+                float wb = at[1] + kHeight * seg.bottom_frac;  // world Y at segment's bottom
+                float wt = at[1] + kHeight * seg.top_frac;     // world Y at segment's top
+                float wp_b[3] = {at[0], wb, at[2]};
+                float wp_t[3] = {at[0], wt, at[2]};
+                float sb[2], st[2];
+                if (!Project(wp_b, vx, vy, vw, vh, sb)) continue;
+                if (!Project(wp_t, vx, vy, vw, vh, st)) continue;
+                if (sb[1] - st[1] < 0.5f) continue;  // segment too tiny to draw
+                // width is a fraction of the character's full box width at that height
+                float seg_half = char_width_screen * 0.5f * seg.width_frac;
+                float sl = sb[0] - seg_half, sr = sb[0] + seg_half;
+                WriteQuad(v, c, sl, st[1], sr, sb[1], fillColour);
+            }
+        }
         if (show_line) {
             WriteSegment(v, c, vx + vw * 0.5f, vy + vh, f[0], f[1], width, espColour);
         }
         if (show_box) {
-            WriteSegment(v, c, left, h[1], right, h[1], width, espColour);
-            WriteSegment(v, c, left, f[1], right, f[1], width, espColour);
-            WriteSegment(v, c, left, h[1], left, f[1], width, espColour);
-            WriteSegment(v, c, right, h[1], right, f[1], width, espColour);
+            WriteRect(v, c, left, right, h[1], f[1], width, espColour);
         }
         if (show_health) {
-            float boxHeight = f[1] - h[1];
-            float barHeight = boxHeight * 0.08f;
-            float barY = h[1] - barHeight - boxHeight * 0.02f;
+            float barHeight = full_h_screen * 0.08f;
+            float barY = h[1] - barHeight - full_h_screen * 0.02f;
             float barLeft = left;
             float barRight = right;
             float barWidth = barRight - barLeft;
@@ -290,11 +375,11 @@ void DrawEsp(X86Context& ctx, float unit) {
             float bgColour[4] = {espColour[0] * 0.3f, espColour[1] * 0.3f, espColour[2] * 0.3f, 0.85f};
             WriteSegment(v, c, barLeft, barY, barRight, barY, barHeight, bgColour);
             if (ratio > 0.001f) {
-                const float* fillColour = ratio > 0.66f ? kHealthColourHigh
-                                     : ratio > 0.33f ? kHealthColourMid
-                                     : kHealthColourLow;
+                const float* healthFill = ratio > 0.66f ? kHealthColourHigh
+                                      : ratio > 0.33f ? kHealthColourMid
+                                      : kHealthColourLow;
                 float fillRight = barLeft + barWidth * ratio;
-                WriteSegment(v, c, barLeft, barY, fillRight, barY, barHeight, fillColour);
+                WriteSegment(v, c, barLeft, barY, fillRight, barY, barHeight, healthFill);
             }
         }
     }
