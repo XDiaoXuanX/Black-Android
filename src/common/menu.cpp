@@ -107,10 +107,22 @@ const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
-// ESP MODE: 24 modes, bits 0-3 for box / line / health / body, bit 4 for x-ray (which forces body).
-// Entries 16-23 are the eight sensible x-ray variants (body always drawn). Values 24-31 are aliased to
-// 16-23 by the renderer so no entry in this table needs to be past index 23; the panel's stepper is capped
-// at 0-23 too.
+
+// RAPID FIRE levels the panel steps through. 1 = OFF, then 2X..8X, then doubling up to 512X, then the
+// INFINITE sentinel (999). Any value >= 2 activates continuous firing in src/game/cheats.cpp
+// ExtraRapidFire() (every fire / throw cooldown cleared every frame), so 2X and INFINITE give the same
+// observable rate — the levels above 8 exist so the user can pick a big number to see; the practical cap
+// is one projectile per frame, so no level can actually exceed frame rate.
+constexpr uint32_t kRapidFireLevels[] = {
+    1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128, 256, 512, 999,
+};
+const char* const kRapidFireNames[] = {
+    "OFF",  "2X",   "3X",   "4X",   "5X",   "6X",   "7X",  "8X",
+    "16X",  "32X",  "64X",  "128X", "256X", "512X", "INFINITE",
+};
+
+// the ESP display modes: bit 0 = box, bit 1 = line, bit 2 = health bar, bit 3 = body silhouette,
+// bit 4 = x-ray (implies body). 24 entries cover every sensible combination of the five flags.
 const char* const kEspDisplayNames[] = {
     "OFF",                                // 0
     "BOX",                                // 1
@@ -550,11 +562,13 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
 bool StepCheatRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
-        case kRapidFire:
-            if (step) o.rapid_fire = uint32_t(StepRange(int(o.rapid_fire), 1, 8, 1, step));
-            if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
-            else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
+        case kRapidFire: {
+            // step through the discrete levels in kRapidFireLevels; the top of the table (999) is
+            // displayed as INFINITE. Any value >= 2 activates continuous mode in cheats.cpp.
+            int i = StepTable(kRapidFireLevels, o.rapid_fire, step);
+            std::snprintf(text, sizeof(text), "%s", kRapidFireNames[i]);
             return true;
+        }
         case kEspDisplay:
             // 24 modes (0-23): the 16 base combinations plus 8 x-ray variants (body always on in those)
             if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 23, 1, step));
