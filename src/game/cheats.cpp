@@ -32,41 +32,43 @@ constexpr uint32_t kDifficulty = 0x2014C;  // in the game object, 0 easy to 3 bl
 constexpr float kFullHealth[] = {1200.0f, 750.0f};
 
 // ---- extra rapid fire: RPG, GRL, Walther 2000 (SNR/SN5) and grenades ---------------------------------
-// The four slow fire weapons keep their fire pacing in their own first person animation, so the regular
-// rapid_fire multiplier never reaches them. With rapid_fire_extra on and rapid_fire at any non-OFF level
-// (2X through 8X), the in-hand slow fire weapon's kWeaponAnim is cleared on a fraction of the frames
-// proportional to the rapid_fire level: at 8X (the panel's maximum) every frame, at 4X every other frame,
-// at 2X every fourth.
+// The four slow fire weapons keep their fire pacing in their own first person animation, and grenades
+// keep their throw pacing in the character's own animation (there is no grenade weapon object). Both
+// animations are the ones that gate the next shot / throw, so as long as they are cleared every frame
+// the game accepts the next trigger / throw immediately.
 //
-// Grenades are kept throwable AT ALL TIMES while rapid_fire_extra + infinite_grenades are both on — there
-// is no recovery window any more. The held weapon's animation, the inventory's busy flag, AND the
-// character's own animation field (same offset as kWeaponAnim, which is where the throw cooldown usually
-// lives on COD characters) are all cleared at the same proportional rate. This gives continuous grenade
-// throwing that mirrors how RPG/GRL keep firing while the trigger is held.
+// CONTINUOUS MODE: while rapid_fire_extra is on and rapid_fire is any level above 1 (2X through 8X),
+// EVERY frame clears:
+//   - the held slow-fire weapon's kWeaponAnim (RPG/GRL/Walther fire cooldown)
+//   - the held weapon's kWeaponAnim       (in case a slow weapon is not in hand but held weapon has a
+//                                          fire cooldown too — same field so harmless)
+//   - the inventory's kInvBusy            (the general "busy" gate; never the suppressor's 0x13)
+//   - the character's own kWeaponAnim     (the throw animation lives here for grenades, since there is
+//                                          no grenade weapon object)
+//
+// There is NO throttle, NO counter, NO recovery window — the fastest the game engine can process a new
+// projectile is the fastest it fires / throws. rapid_fire level becomes irrelevant beyond enabling the
+// feature (>= 2). The animations may not be visible (cleared before they progress) but the projectiles
+// spawn and travel — this is the trade-off for absolute continuous rate.
 constexpr uint32_t kWeaponManager = 0x2D12D0;
 constexpr uint32_t kTableCount = 1;      // byte at the table's start
 constexpr uint32_t kTableEntries = 4;    // pointer to the entry array
 constexpr uint32_t kEntrySize = 0x20;    // name key (8 bytes), weapon data, ...
 constexpr uint32_t kWeaponType = 0;      // byte: index in the table
 constexpr uint32_t kWeaponAnim = 0xD8;   // the first person animation id, 0 when idle. On characters this
-                                          // offset usually stores the throw/action animation cooldown too.
+                                          // offset is where the throw cooldown usually lives (same slot
+                                          // as the weapon's animation id since COD Classic shares the
+                                          // struct prefix for these action fields).
 constexpr uint32_t kPlayerInventory = 0x278;
 constexpr uint32_t kInvOwner = 0x1C;
 constexpr uint32_t kInvHeld = 0x24;      // the weapon in hand
 constexpr uint32_t kInvSwitchTo = 0x28;  // the weapon a switch brings out
 constexpr uint32_t kInvRequest = 0x38;   // 2 asks to switch to the other slot, as the d-pad does
 // the inventory's busy flag: 0x13 while the suppressor animation runs (weapons.cpp kInvBusy). Cleared
-// during a grenade throw so the next throw can start, but never when it holds 0x13 (that is the
+// during continuous throw so the next throw can start, but never when it holds 0x13 (that is the
 // suppressor's, which weapons.cpp waits on).
 constexpr uint32_t kInvBusy = 0xB4;
 constexpr uint32_t kSuppressorBusy = 0x13;
-// The panel's RAPID FIRE steps from 1 to 8. kMaxRapidLevel is the counter's reset value, decremented by
-// rapid_fire each frame: at 8 it hits 0 every frame (clear every frame), at 4 every other frame, at 2
-// every fourth. The two counters move together but are kept separate so the slow-fire weapon and the
-// grenade do not steal each other's throttle slot.
-constexpr int kMaxRapidLevel = 8;
-int g_slowfire_counter = kMaxRapidLevel;
-int g_grenade_counter = kMaxRapidLevel;
 
 uint32_t Player() { return R32(kWorld) ? R32(kWorld) + kWorldPlayer : 0; }
 
@@ -135,67 +137,35 @@ bool SlowFireHeld(uint32_t weapon) {
     return kSlowCodes.count(code) != 0;
 }
 
-// Called from the player's update each frame. Two jobs, both throttled proportionally to rapid_fire:
-//  1. Slow fire weapons (RPG, GRL, Walther 2000): the weapon's animation field is cleared on a fraction
-//     of frames proportional to the rapid_fire level, so the weapon fires at the same multiplier the
-//     regular rapid_fire gives the other guns. Only when a slow fire weapon is in hand and idle.
-//  2. Grenades: the game's throw cooldown is defeated by clearing (a) the held weapon's animation,
-//     (b) the inventory's busy flag, and (c) the character's own animation field (usually where the
-//     throw cooldown lives), at the same proportional rate. This keeps the throw action always ready
-//     while infinite_grenades is on — continuous throwing without ever running out or waiting.
-// A rapid_fire of 1 (OFF) makes this a no-op and resets the throttle counters.
+// Called from the player's update every frame. Clears every cooldown gate at once, no throttle, no
+// counter, no recovery window. Conditions to activate: rapid_fire_extra on, rapid_fire >= 2 (2X through
+// 8X all work the same — continuous). Both slow-fire weapons and grenade throwing become continuous.
 void ExtraRapidFire() {
     const game::Options& o = game::Opt();
-    if (!o.rapid_fire_extra || o.rapid_fire <= 1) {
-        g_slowfire_counter = kMaxRapidLevel;
-        g_grenade_counter = kMaxRapidLevel;
-        return;
-    }
+    if (!o.rapid_fire_extra || o.rapid_fire <= 1) return;
     uint32_t me = Player();
-    if (!me || R32(me + kCharDying)) {
-        g_slowfire_counter = kMaxRapidLevel;
-        g_grenade_counter = kMaxRapidLevel;
-        return;
-    }
+    if (!me || R32(me + kCharDying)) return;
     uint32_t inv = me + kPlayerInventory;
-    if (R32(inv + kInvOwner) != me) {
-        g_slowfire_counter = kMaxRapidLevel;
-        g_grenade_counter = kMaxRapidLevel;
-        return;
-    }
-    const int step = int(o.rapid_fire);
+    if (R32(inv + kInvOwner) != me) return;
 
-    // (1) slow fire weapons — throttle by rapid_fire level
-    g_slowfire_counter -= step;
-    if (g_slowfire_counter <= 0) {
-        g_slowfire_counter = kMaxRapidLevel;
-        if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
-            uint32_t weapon = R32(inv + kInvHeld);
-            if (weapon && SlowFireHeld(weapon)) {
-                if (R32(weapon + kWeaponAnim)) W32(weapon + kWeaponAnim, 0);
-            }
+    // Slow-fire weapons (RPG / GRL / Walther 2000): clear the held weapon's fire animation every frame
+    // so the launcher fires at frame rate. Only when a slow fire weapon is in hand and not mid-switch.
+    if (!R32(inv + kInvRequest) && R32(inv + kInvHeld) == R32(inv + kInvSwitchTo)) {
+        uint32_t weapon = R32(inv + kInvHeld);
+        if (weapon && SlowFireHeld(weapon)) {
+            if (R32(weapon + kWeaponAnim)) W32(weapon + kWeaponAnim, 0);
         }
     }
 
-    // (2) grenade throw — kept throwable AT ALL TIMES while infinite_grenades is on, no recovery
-    // window. Same throttle as slow-fire weapons. Clears the held weapon's animation, the
-    // inventory's busy flag, AND the character's own animation field (which is where the throw
-    // cooldown usually lives on COD characters — same offset as kWeaponAnim by convention).
-    if (!o.infinite_grenades) {
-        g_grenade_counter = kMaxRapidLevel;
-        return;
-    }
-    g_grenade_counter -= step;
-    if (g_grenade_counter <= 0) {
-        g_grenade_counter = kMaxRapidLevel;
-        // (a) held weapon's animation (safe even when the held slot is empty)
+    // Grenade: clear every gate every frame — the held weapon's animation (in case the fire cooldown is
+    // there too), the inventory's busy flag (never the suppressor's 0x13), and the character's own
+    // animation field (which is where the throw cooldown lives for grenades, since there is no grenade
+    // weapon object). Result: continuous throwing while infinite_grenades is also on.
+    if (o.infinite_grenades) {
         uint32_t held = R32(inv + kInvHeld);
         if (held && R32(held + kWeaponAnim)) W32(held + kWeaponAnim, 0);
-        // (b) inventory's busy flag, but never the suppressor's 0x13 (weapons.cpp waits on that)
         uint32_t busy = R32(inv + kInvBusy);
         if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
-        // (c) character's own animation field — the throw animation lives on the character, not
-        // on any weapon, so the cooldown that gates the next throw is likely at this same offset
         uint32_t charAnim = R32(me + kWeaponAnim);
         if (charAnim) W32(me + kWeaponAnim, 0);
     }
@@ -204,7 +174,7 @@ void ExtraRapidFire() {
 }  // namespace
 
 // The player's update, a frame (ecx the player, its class's own): god mode fills the health and holds the flag
-// its damage calls test, extra rapid fire keeps a slow fire weapon idle and clears a grenade's throw recovery
+// its damage calls test, extra rapid fire clears every fire / throw cooldown every frame
 X86_EXTERN_FUNC(__imp__sub_001E5FA0);
 X86_FUNC(sub_001E5FA0) {
     uint32_t me = ctx.ecx;
@@ -218,7 +188,7 @@ X86_FUNC(sub_001E5FA0) {
             G<uint8_t>(me + kCharInvulnerable) = 0;
             g_invulnerable = false;
         }
-        ExtraRapidFire();  // rapid fire extra: slow fire weapons + continuous grenade throwing
+        ExtraRapidFire();  // rapid fire extra: continuous slow-fire + continuous grenade throw
     }
     __imp__sub_001E5FA0(ctx, base);
 }
@@ -233,9 +203,9 @@ X86_FUNC(sub_001E74B0) {
 }
 
 // A character's animation event (64-bit hash, then a pointer to the character): the throw takes a grenade
-// (0x1E8934), the cheat puts the player's back so the count never drops. The throw recovery used to be
-// triggered here too — it is not any more: the grenade section of ExtraRapidFire now runs continuously
-// while infinite_grenades is on, so there is no recovery window to set.
+// (0x1E8934), the cheat puts the player's back so the count never drops. The throw recovery is not
+// triggered here any more — ExtraRapidFire keeps every cooldown cleared continuously so there is no
+// recovery window to set.
 X86_EXTERN_FUNC(__imp__sub_001E8830);
 X86_FUNC(sub_001E8830) {
     uint32_t who = R32(ctx.esp + 0xC);
