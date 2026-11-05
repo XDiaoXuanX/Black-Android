@@ -265,9 +265,9 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor, kEspRed, kEspGreen,
-             kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick, kDynamicRes, kDynamicTarget,
-             kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspBody, kEspFill, kEspColor,
+             kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
+             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -344,13 +344,15 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
-    {Kind::Value, kEspDisplay, "ESP MODE"},          // OFF / BOX / LINE / HEALTH / combinations / ALL
-    {Kind::Value, kEspColor, "ESP COLOR"},           // WHITE / RED / … / CUSTOM
-    {Kind::Value, kEspRed, "ESP RED"},               // 0 – 255 (custom)
-    {Kind::Value, kEspGreen, "ESP GREEN"},           // 0 – 255 (custom)
-    {Kind::Value, kEspBlue, "ESP BLUE"},             // 0 – 255 (custom)
+    {Kind::Value, kEspDisplay, "ESP MODE"},
+    {Kind::Value, kEspBody, "ESP BODY"},
+    {Kind::Value, kEspFill, "ESP FILL"},
+    {Kind::Value, kEspColor, "ESP COLOR"},
+    {Kind::Value, kEspRed, "ESP RED"},
+    {Kind::Value, kEspGreen, "ESP GREEN"},
+    {Kind::Value, kEspBlue, "ESP BLUE"},
     {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},
-    {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},   // NECK / BODY / LEGS / HEAD
+    {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},
     {Kind::Value, kAimbotPull, "AIMBOT PULL"},
     {Kind::Value, kAimbotDeadzone, "AIMBOT DEADZONE"},
     {Kind::Heading, -1, "GAME"},
@@ -434,6 +436,8 @@ bool* ToggleFlag(Settings& s, int id) {
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
         case kEsp: return &o.esp;
+        case kEspBody: return &o.esp_body;
+        case kEspFill: return &o.esp_fill;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kAimbot: return &o.aimbot;
@@ -535,7 +539,6 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
         case kEspDisplay:
-            // the 8 modes: OFF / BOX / LINE / BOX + LINE / HEALTH / BOX + HEALTH / LINE + HEALTH / ALL
             if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 7, 1, step));
             std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 7u)]);
             return true;
@@ -737,6 +740,8 @@ void RestoreDefaults(int page) {
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
         o.esp_display = none.esp_display;
+        o.esp_body = none.esp_body;
+        o.esp_fill = none.esp_fill;
         o.esp_color = none.esp_color;
         o.esp_red = none.esp_red;
         o.esp_green = none.esp_green;
@@ -778,6 +783,8 @@ void RestoreDefaults(int page) {
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
     o.esp_display = keep.esp_display;
+    o.esp_body = keep.esp_body;
+    o.esp_fill = keep.esp_fill;
     o.esp_color = keep.esp_color;
     o.esp_red = keep.esp_red;
     o.esp_green = keep.esp_green;
