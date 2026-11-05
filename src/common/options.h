@@ -52,23 +52,17 @@ struct Options {
     // kRapidFireLevels / kRapidFireNames in the cheats panel:
     //   OFF, 2X, 3X, 4X, 5X, 6X, 7X, 8X, 16X, 32X, 64X, 128X, 256X, 512X, INFINITE (999)
     // hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire: with INFINITE (999) the wait is
-    // effectively zero → one projectile per frame (frame-rate continuous fire).
+    // effectively zero → one projectile per frame (frame-rate continuous fire). With values 2..8 the wait is
+    // divided the usual way, subject to the game's fire-mode pacing.
     uint32_t rapid_fire = 1;
     // cheat: rapid fire also reaches the four slow fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) and,
     // with infinite_grenades also on, the grenade throw. The four weapons keep their pacing in their own first
     // person animation, and the grenade throw in a recovery animation; when this is on and rapid_fire is any
-    // non-OFF level, those animations are cleared at a fraction of the frames proportional to rapid_fire.
+    // non-OFF level, those animations are cleared at a fraction of the frames proportional to rapid_fire, so
+    // the game accepts the next trigger pull (or throw) sooner — recovery-window version.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
-    // cheat: WALLBANG — force every player weapon's penetration to a very high value so every bullet passes
-    // through any wall (wood, brick, concrete, metal, glass). Scans candidate offsets in the weapon data block
-    // (0x3C..0xB0) for plausible small floats (0.3..1.5 — the typical range for penetration in COD2-derived
-    // weapon defs) and overrides them to kWallbangValue (10.0). Damage (20-50), range (500+), clip size and
-    // ammo type are outside that range and are never touched. Recoil and fire time share the same numeric
-    // range, so they may be modified as well — the log line "wallbang: modified [...]" lists exactly which
-    // offsets were changed so the range can be narrowed if a side effect appears.
-    bool wallbang = false;
     uint32_t game_speed = 100;  // cheat: percent of the game's speed, menus and films keep theirs
     bool god_mode = false;  // cheat: no hit takes the player's health
     bool one_hit_kill = false;  // cheat: any hit of the player's bullets kills
