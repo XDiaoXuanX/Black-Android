@@ -66,19 +66,32 @@ struct Options {
     bool infinite_medkits = false;  // cheat: using a medkit keeps the count (src/game/weapons.cpp)
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
-    bool esp = false;  // cheat: the ESP master toggle; what it draws is picked by esp_display below
-    // cheat: which ESP elements to draw, using bit flags. Bit 0 (1) = box round each living enemy, bit 1 (2)
+    bool esp = false;  // cheat: the ESP master toggle; what it draws is picked by esp_display / esp_body / esp_fill
+    // cheat: which ESP outlines to draw, using bit flags. Bit 0 (1) = box round each living enemy, bit 1 (2)
     // = line to it from the bottom of the screen, bit 2 (4) = health bar above its head. So:
     //   0 = off (nothing, even with esp on)     1 = box                2 = line            3 = box + line
     //   4 = health                               5 = box + health        6 = line + health   7 = all (default)
     // The health bar's fill colour is green above 66% of the reference max, yellow above 33%, red below; the
     // reference is kEnemyRefHealth in esp.cpp (250 HP = full bar).
     uint32_t esp_display = 7;
-    // cheat: colour of the ESP box, line, and health bar background. 0..7 a preset from kEspPresets (WHITE,
-    // RED, GREEN, CYAN, YELLOW, MAGENTA, ORANGE, PURPLE), 8 CUSTOM: the esp_red / esp_green / esp_blue below.
-    // Stepping the preset writes its colour into those three fields, and any manual change of them switches the
-    // preset back to CUSTOM, so the two always agree — the row shows a preset name while the number is one of
-    // the eight, CUSTOM otherwise.
+    // cheat: body-silhouette detection — draws the enemy's head, torso, and legs as filled shapes tinted with
+    // the ESP colour at ~30% opacity, WITHOUT any rectangular box outline. The silhouette uses 8 stacked
+    // segments with varying widths (narrow at head/feet, wide at torso) so it follows a rough human contour
+    // instead of a plain rectangle. Requires the esp master toggle on. Typically combined with esp_display = 0
+    // so only the body silhouette shows and no box/line/health bar appear. When esp_display also has the box
+    // bit set, both the box outline AND the body silhouette draw (they overlap). Uses the same ESP colour as
+    // the box/line/fill/health background, so adjusting ESP COLOR changes the silhouette too.
+    bool esp_body = false;
+    // cheat: fill the enemy's entire head-to-feet bounding box with a semi-transparent tint of the ESP colour
+    // (30% opacity). This is the plain rectangular fill; for a body-shaped (silhouette) fill use esp_body
+    // instead. Draws at the same size as the box outline when both are on. The colour is the same one picked
+    // by esp_color / esp_red / esp_green / esp_blue. Requires the esp master toggle on.
+    bool esp_fill = false;
+    // cheat: colour of the ESP box, line, body silhouette, fill, and health bar background. 0..7 a preset from
+    // kEspPresets (WHITE, RED, GREEN, CYAN, YELLOW, MAGENTA, ORANGE, PURPLE), 8 CUSTOM: the esp_red /
+    // esp_green / esp_blue below. Stepping the preset writes its colour into those three fields, and any manual
+    // change of them switches the preset back to CUSTOM, so the two always agree — the row shows a preset name
+    // while the number is one of the eight, CUSTOM otherwise.
     uint32_t esp_color = 0;
     uint32_t esp_red = 224;    // 0..255, custom red    (224/255 ≈ 0.88, the soft white the ESP shipped with)
     uint32_t esp_green = 219;  // 0..255, custom green  (219/255 ≈ 0.86)
