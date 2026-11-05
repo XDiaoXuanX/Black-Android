@@ -78,6 +78,7 @@ constexpr uint32_t kWeaponAnim = 0xD8;        // the first person animation id, 
 constexpr uint32_t kWeaponSuppressed = 0x108;  // 1 while the suppressor is on (found by diffing snapshots)
 constexpr uint32_t kWeaponData = 0xEC;
 constexpr uint32_t kWeaponMagazine = 0xF4;  // the main fire's magazine, +0xF8 the alternate fire's
+constexpr uint32_t kWeaponAltAmmo = kWeaponMagazine + 4;  // the alternate fire's ammo struct (M203 grenades)
 constexpr uint32_t kMagazineData = 8;
 constexpr uint32_t kDataClip = 0x60;
 constexpr uint32_t kDataAmmoType = 0x64;
@@ -145,6 +146,15 @@ std::atomic<bool> g_auto_suppressor{false};  // the panel offers both versions o
 std::set<std::string> g_supp_codes;
 std::map<uint32_t, int> g_applied;  // weapon object -> type it was handled as
 uint32_t g_swap_back = 0;           // a weapon to bring back out once the other one is in hand
+
+// The Magnum with a grenade launcher: MGN/MG5 has no alternate fire in the game, but RAPID FIRE EXTRA can give
+// it one by sharing a BNS donor's M203 alt ammo. A BNS weapon is created (owned by the player, not in any slot)
+// and kept alive; the Magnum's alt ammo pointer (+0xF8) is pointed to the donor's alt ammo struct, which has the
+// grenade ammo type and clip. Firing alt then launches grenades from the Magnum. INFINITE AMMO keeps the shared
+// alt ammo full (the M203's clip depletes otherwise). The donor lives until the level ends (all weapons freed) —
+// WeaponsTick clears g_magnum_donor on level end and the next give recreates it. If the donor cannot be created
+// (no BNS in this level's table, or no room in the weapon pool), the Magnum stays as it is: no alternate fire.
+uint32_t g_magnum_donor = 0;
 
 // no-bullet-spread: the originals of the spread floats, so turning the option back off restores the weapon
 uint32_t g_spread_weapon = 0;
@@ -521,6 +531,48 @@ void GrantSuppressor(int type) {
     DiagLog("weapons: suppressor owned for type %d", type);
 }
 
+// The Magnum with a grenade launcher: MGN/MG5 has no alternate fire in the game, but RAPID FIRE EXTRA can give
+// it one by sharing a BNS donor's M203 alt ammo. A BNS weapon is created (owned by the player, not in any slot)
+// and kept alive; the Magnum's alt ammo pointer (+0xF8) is pointed to the donor's alt ammo struct, which has the
+// grenade ammo type and clip. Firing alt then launches grenades from the Magnum. INFINITE AMMO keeps the shared
+// alt ammo full. The donor lives until the level ends (all weapons freed) — WeaponsTick clears g_magnum_donor on
+// level end and the next give recreates it. If the donor cannot be created (no BNS in this level's table, or no
+// room in the weapon pool), the Magnum stays as it is: no alternate fire.
+void GiveMagnumM203(X86Context& ctx, const Level& l, uint32_t magnum) {
+    if (!magnum) return;
+    // Find BNS in the level's table
+    int bns_type = -1;
+    for (int t = 0; t < l.count; t++) {
+        if (CodeOf(Decode(EntryKey(l, t))) == "BNS") { bns_type = t; break; }
+    }
+    if (bns_type < 0) {
+        DiagLog("magnum: no BNS in the table, alt fire stays empty");
+        return;
+    }
+    // Create or reuse a BNS donor
+    if (!g_magnum_donor) {
+        uint32_t edi = ctx.edi;
+        ctx.edi = l.manager;
+        g_magnum_donor = CallGuest(ctx, kCreateWeapon, {l.player, uint32_t(bns_type), 0});
+        ctx.edi = edi;
+        if (!g_magnum_donor) {
+            DiagLog("magnum: could not create BNS donor");
+            return;
+        }
+        DiagLog("magnum: BNS donor at %08X (type %d)", unsigned(g_magnum_donor), bns_type);
+    }
+    uint32_t donor_alt = R32(g_magnum_donor + kWeaponAltAmmo);
+    if (!donor_alt) {
+        DiagLog("magnum: BNS donor has no alt ammo");
+        return;
+    }
+    // Share the donor's alt ammo: MGN's alt fire reads M203's grenade ammo type and clip
+    if (R32(magnum + kWeaponAltAmmo) != donor_alt) {
+        W32(magnum + kWeaponAltAmmo, donor_alt);
+        DiagLog("magnum: M203 alt ammo %08X assigned to weapon %08X", unsigned(donor_alt), unsigned(magnum));
+    }
+}
+
 void DoFillMedkits() {
     Level l;
     if (!ReadLevel(l)) return SetStatus("Only during a level");
@@ -578,6 +630,10 @@ void DoGive(X86Context& ctx, int code) {
     W32(slots + uint32_t(other) * 4, weapon);
     W32(weapon + kWeaponSuppressed, suppressed ? 1 : 0);  // before it comes out: the sound is chosen then
     g_applied[weapon] = type;
+    // The Magnum gets the M203 grenade launcher from a BNS donor (share the alt ammo struct). Done before the
+    // fill so the shared alt ammo (grenades) is topped up too.
+    std::string code_name = CodeOf(name);
+    if (code_name == "MGN" || code_name == "MG5") GiveMagnumM203(ctx, l, weapon);
     FillWeapon(l, weapon, false);
     W32(l.inventory + kInvRequest, 2);  // out it comes, as the d-pad brings it
     bool model = EnsureWorldModel(ctx, name, G<uint8_t>(l.world + kWorldSilver) != 0);
@@ -712,6 +768,18 @@ void WeaponsTick(X86Context& ctx) {
     if (ReadLevel(l)) {
         AutoSuppressor(l);
         SwapBack(l);
+        // The Magnum gets its M203 from a BNS donor when RAPID FIRE EXTRA is on and it lacks alt ammo. This
+        // covers the cases where the Magnum was not given through the panel (level reload, loadout) — the
+        // patch is idempotent (GiveMagnumM203 early-returns when alt ammo is already set).
+        if (game::Opt().rapid_fire_extra) {
+            int slots = std::min<int>(G<uint8_t>(l.inventory + kInvSlotCount), 2);
+            for (int i = 0; i < slots; i++) {
+                uint32_t w = Slot(l, i);
+                if (!w || R32(w + kWeaponAltAmmo)) continue;
+                std::string code = CodeOf(Decode(EntryKey(l, G<uint8_t>(w + kWeaponType))));
+                if (code == "MGN" || code == "MG5") GiveMagnumM203(ctx, l, w);
+            }
+        }
         // no bullet spread: zero the spread floats of the weapon in hand (or put back the originals when the
         // option is turned off). Combined with NO RECOIL this keeps every shot on exactly the aim line.
         if (game::Opt().no_bullet_spread) {
@@ -729,7 +797,8 @@ void WeaponsTick(X86Context& ctx) {
     } else {
         g_applied.clear();
         g_swap_back = 0;
-        RestoreSpread();  // level ended: hand the weapon-def back as the game left it
+        g_magnum_donor = 0;  // level ended: the game freed all weapons, the donor pointer is stale
+        RestoreSpread();     // level ended: hand the weapon-def back as the game left it
     }
 }
 
