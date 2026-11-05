@@ -2,9 +2,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstring>
-#include <mutex>
-#include <string>
 #include <thread>
 
 #include "app/app.h"
@@ -28,6 +25,7 @@ void EspCamera();  // esp.cpp
 }
 
 namespace {
+
 constexpr uint32_t kDevice = SYM(D3D_Device);
 constexpr uint32_t kInitDefaultState = 0x271710;
 
@@ -60,11 +58,12 @@ void VerticalBlank(X86Context& ctx) {
         ResetEvent(*event);
     }
 }
+
 }  // namespace
 
 // the viewport as D3DDevice_SetViewport stores it, for the game's own readers
 void StoreViewport(X86Context&, uint8_t*) {
-    std::lock_guard lock(d3d::Lock());
+    std::lock_guard<std::recursive_mutex> lock(d3d::Lock());
     const gpu::Viewport& v = d3d::State().viewport;
     uint32_t p = kDevice + XDK_CDevice_Viewport;
     W32(p, v.x);
@@ -114,10 +113,10 @@ static float FrameTime() {
     using clock = std::chrono::steady_clock;
     static clock::time_point last;
     static uint32_t frame;
-    static float dt = G(kGameFrameTime);
+    static float dt = G<float>(kGameFrameTime);
     if (uint32_t f = R32(kFrameCount); f != frame) {
         auto now = clock::now();
-        dt = std::min(std::chrono::duration(now - last).count(), G(kGameFrameTime));
+        dt = std::min(std::chrono::duration<float>(now - last).count(), G<float>(kGameFrameTime));
         frame = f;
         last = now;
     }
@@ -133,11 +132,11 @@ X86_FUNC(sub_000BE3F0) {
         return R32(t + kTimerWholeSteps) + parts;
     };
     double before = steps();
-    float time = G(t + kTimerTime);
+    float time = G<float>(t + kTimerTime);
     __imp__sub_000BE3F0(ctx, base);
     float dt = FrameTime();
-    G(t + kTimerDt) = dt / std::max(R32(t + kTimerDivisor), 1u);
-    G(t + kTimerTime) = time + float((steps() - before) * dt);
+    G<float>(t + kTimerDt) = dt / std::max(R32(t + kTimerDivisor), 1u);
+    G<float>(t + kTimerTime) = time + float((steps() - before) * dt);
 }
 
 // frame throttle: sleeps that gave the console's one CPU to the loader
@@ -151,14 +150,14 @@ void MenuTick(X86Context& ctx, uint8_t*) {
     static clock::time_point last;
     static float carry;
     auto now = clock::now();
-    carry += std::min(std::chrono::duration(now - last).count(), G(kGameFrameTime)) * 1000.0f;
+    carry += std::min(std::chrono::duration<float>(now - last).count(), G<float>(kGameFrameTime)) * 1000.0f;
     last = now;
     ctx.eax = uint32_t(carry);
     carry -= float(ctx.eax);
 }
 
 // what a step made once a frame at 30 becomes over the real frame: factor to the power of this
-static float FrameShare() { return FrameTime() / G(kGameFrameTime); }
+static float FrameShare() { return FrameTime() / G<float>(kGameFrameTime); }
 
 static uint32_t Player() { return R32(kWorld) + kWorldPlayer; }
 
@@ -175,10 +174,10 @@ constexpr uint32_t kPlayerFireRequest = 0x32C;
 
 // The zoom of the aim grows or shrinks by a fixed share a frame
 void ZoomStep(X86Context& ctx, uint8_t*) {
-    float old = G(R32(ctx.ecx + kWeaponOwner) + kPlayerZoom);
+    float old = G<float>(R32(ctx.ecx + kWeaponOwner) + kPlayerZoom);
     float now = ctx.xmm[0].f[0];
     if (now == old || old <= 0) return;
-    bool out = !G(ctx.ecx + 0x105) && old > 1;  // back towards 1
+    bool out = !G<uint8_t>(ctx.ecx + 0x105) && old > 1;  // back towards 1
     ctx.xmm[0].f[0] = out ? 1 + (old - 1) * std::pow((now - 1) / (old - 1), FrameShare())
                           : old * std::pow(now / old, FrameShare());
 }
@@ -190,15 +189,15 @@ static float Widen(uint32_t degrees) {
     return std::tan(std::clamp(degrees, 45u, 140u) * kHalf) / std::tan(70 * kHalf);
 }
 
-static float g_gun = 1.0f;         // the gun's picture over the view's
-static float g_view_fov = 0;       // the degrees FieldOfView left
-static float g_game_fov = 0;       // the game's own in their place
+static float g_gun = 1.0f;  // the gun's picture over the view's
+static float g_view_fov = 0;  // the degrees FieldOfView left
+static float g_game_fov = 0;  // the game's own in their place
 
 // The view of play, 70 over the zoom: the setting from the hip, the game's own once the aim is in.
 // ecx the weapon, xmm0 its zoom. Scripted cameras write theirs after this
 void FieldOfView(X86Context& ctx, uint8_t*) {
     uint32_t data = R32(ctx.ecx + kWeaponData);
-    float aim = data ? G(data + kDataAimZoom) : 1;
+    float aim = data ? G<float>(data + kDataAimZoom) : 1;
     float zoom = ctx.xmm[0].f[0];
     float hip = aim > 1 ? std::clamp((aim - zoom) / (aim - 1), 0.0f, 1.0f) : 1.0f;
     float view = 1 + (Widen(game::Opt().fov) - 1) * hip;
@@ -222,7 +221,7 @@ static float GameViewShare(float fov) {
 // LOD, draw distance and particle count compares scale with the camera's tangent (ebx camera): they keep the
 // game's own view, a wider one drops models and effects in front of the player
 void LodTangent(X86Context& ctx, uint8_t*) {
-    G(ctx.ebx + kCameraTangent) *= GameViewShare(G(ctx.ebx + kCameraFov));
+    G<float>(ctx.ebx + kCameraTangent) *= GameViewShare(G<float>(ctx.ebx + kCameraFov));
 }
 
 // The list of the first person models, gun, arms and muzzle mesh: drawn at the viewmodel setting
@@ -238,9 +237,9 @@ X86_FUNC(sub_00176F60) {
 // What sits on the gun follows its picture: across the player's view a point or an axis grows by the same share,
 // its depth stays
 static void OnGun(uint32_t at, bool point) {
-    float* v = &G(at);
-    const float* forward = &G(Player() + kPlayerForward);
-    const float* eye = &G(Player() + kPlayerEye);
+    float* v = &G<float>(at);
+    const float* forward = &G<float>(Player() + kPlayerForward);
+    const float* eye = &G<float>(Player() + kPlayerEye);
     float d[3];
     float depth = 0;
     for (int i = 0; i < 3; i++) {
@@ -251,6 +250,7 @@ static void OnGun(uint32_t at, bool point) {
 }
 
 // --- viewmodel & shell casing shift ---------------------------------------
+
 // The viewmodel's own translation, computed at the game's own 70 degrees. On the viewmodel setting it must sit
 // where the wider picture puts the gun: same direction from the eye, same depth, hands and arms stay attached.
 // The game reads the translated vector through edx.
@@ -269,6 +269,7 @@ void ShellShift(X86Context& ctx, uint8_t*) {
 }
 
 // --- locator / effect shift -----------------------------------------------
+
 constexpr uint32_t kMatrixPosition = 48;  // the last of a matrix's four rows
 
 // A locator's matrix moved onto the gun's picture, as a copy: the game's own stays where bullets start
@@ -283,19 +284,11 @@ static uint32_t Follow(uint32_t matrix, uint32_t owner, bool axes) {
 constexpr uint32_t kEffectOwner = 0x44;
 
 // the muzzle flash sprite, drawn with the matrix
-void FlashSprite(X86Context& ctx, uint8_t*) {
-    ctx.eax = Follow(ctx.eax, Player(), true);
-}
-
+void FlashSprite(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, Player(), true); }
 // effects that follow a locator of their owner (edi)
-void GunEffect(X86Context& ctx, uint8_t*) {
-    ctx.eax = Follow(ctx.eax, ctx.edi, false);
-}
-
+void GunEffect(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, ctx.edi, false); }
 // effects that start at one
-void GunEffectStart(X86Context& ctx, uint8_t*) {
-    ctx.edx = Follow(ctx.edx, R32(ctx.ebx + kEffectOwner), false);
-}
+void GunEffectStart(X86Context& ctx, uint8_t*) { ctx.edx = Follow(ctx.edx, R32(ctx.ebx + kEffectOwner), false); }
 
 // bullet and its shot
 constexpr uint32_t kBulletShot = 0x70;
@@ -339,28 +332,26 @@ static float g_sway_share[2];
 void SwayBegin(X86Context& ctx, uint8_t*) {
     g_sway = ctx.eax + kDataSwayShares;
     for (int i = 0; i < 2; i++) {
-        float& k = G(g_sway + i * 4);
+        float& k = G<float>(g_sway + i * 4);
         g_sway_share[i] = k;
         k = 1 - std::pow(1 - k, FrameShare());
     }
 }
 void SwayEnd(X86Context&, uint8_t*) {
     if (!g_sway) return;
-    for (int i = 0; i < 2; i++) G(g_sway + i * 4) = g_sway_share[i];
+    for (int i = 0; i < 2; i++) G<float>(g_sway + i * 4) = g_sway_share[i];
     g_sway = 0;
 }
 
 // The player's move speed eases to the stick's by at most a fixed step a frame: the step of a frame at 30
-void MoveEase(X86Context& ctx, uint8_t*) {
-    ctx.xmm[1].f[0] *= FrameShare();
-}
+void MoveEase(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
 
-static float Dt() { return G(R32(kWorld) + kTimerDt); }
+static float Dt() { return G<float>(R32(kWorld) + kTimerDt); }
 
 // A wait set and tested once a frame lasts whole frames of the game's frame time: as many at any frame rate.
 // rest is added, what the last wait ran over by
 static float WholeFrames(float wait, float rest) {
-    float step = G(kGameFrameTime) / std::max(R32(R32(kWorld) + kTimerDivisor), 1u);
+    float step = G<float>(kGameFrameTime) / std::max(R32(R32(kWorld) + kTimerDivisor), 1u);
     if (!(Dt() < step)) return wait;
     int frames = 0;
     for (float left = wait; left > 0 && frames < 4096; left -= step) frames++;
@@ -374,7 +365,6 @@ constexpr uint32_t kWeaponState = 0xD8;
 constexpr uint32_t kWeaponWait = 0xDC;
 constexpr uint32_t kWeaponAmmo = 0xF4;
 constexpr uint32_t kWeaponAltAmmo = 0xF8;  // the grenades under the barrel
-
 // ammo: a shot takes one from each (0x1EFBBB)
 constexpr uint32_t kAmmoTotal = 0x14;
 constexpr uint32_t kAmmoClip = 0x18;
@@ -390,7 +380,7 @@ struct KeptAmmo {
 static KeptAmmo KeepAmmo(uint32_t weapon) {
     uint32_t ammo = R32(weapon + kWeaponAmmo);
     if (!game::Opt().infinite_ammo || !ammo || R32(weapon + kWeaponOwner) != Player()) return {};
-    return {ammo, R32(ammo + kAmmoTotal), G(ammo + kAmmoClip)};
+    return {ammo, R32(ammo + kAmmoTotal), G<uint16_t>(ammo + kAmmoClip)};
 }
 
 // the rounds a weapon has left in all: a shot of either barrel takes one (0x1EFBC5, 0x1EFEED)
@@ -404,7 +394,7 @@ static uint32_t Rounds(uint32_t weapon) {
 static void RestoreAmmo(uint32_t weapon, const KeptAmmo& kept) {
     if (!kept.ammo || R32(weapon + kWeaponAmmo) != kept.ammo) return;
     if (R32(kept.ammo + kAmmoTotal) < kept.total) W32(kept.ammo + kAmmoTotal, kept.total);
-    if (G(kept.ammo + kAmmoClip) < kept.clip) G(kept.ammo + kAmmoClip) = kept.clip;
+    if (G<uint16_t>(kept.ammo + kAmmoClip) < kept.clip) G<uint16_t>(kept.ammo + kAmmoClip) = kept.clip;
 }
 
 // the wait between a weapon's shots. The frame of a first shot is part of it: the fire clip runs that frame too
@@ -412,7 +402,7 @@ static void RestoreAmmo(uint32_t weapon, const KeptAmmo& kept) {
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
 X86_FUNC(sub_001EEFD0) {
     uint32_t weapon = R32(ctx.esp + 4);
-    float& wait = G(weapon + kWeaponWait);
+    float& wait = G<float>(weapon + kWeaponWait);
     float rest = wait;
     float dt = Dt();
     KeptAmmo kept = KeepAmmo(weapon);
@@ -421,10 +411,11 @@ X86_FUNC(sub_001EEFD0) {
     bool shot = Rounds(weapon) < rounds;
     RestoreAmmo(weapon, kept);
     uint32_t me = R32(weapon + kWeaponOwner);
-    // the rapid fire cheat: a shot's wait, its fire mode's +0x20, is that many times shorter.
-    // REVERTED: std::max -> std::clamp(rapid_fire, 1u, 8u). Capped at 8X, so the panel's INFINITE level (999)
-    // behaves exactly like 8X. The 999 sentinel is still stored, but only 1..8 reaches the wait division below.
-    uint32_t faster = std::clamp(game::Opt().rapid_fire, 1u, 999u);
+    // INFINITE RAPID FIRE: rapid_fire can reach 999 (the INFINITE sentinel the panel stores). std::max
+    // (instead of std::clamp to 8) lets the full 999 through, dividing the wait by 999 → effectively zero
+    // → the game accepts the next shot every frame. Every level from 2X through INFINITE now fires at
+    // frame rate (one projectile per frame); below 2X the game's own pacing applies.
+    uint32_t faster = std::max(game::Opt().rapid_fire, 1u);
     if (shot && me == Player() && wait > 0) wait /= float(faster);
     if (me == Player()) {
         if (R32(weapon + kWeaponState) != 1 || wait != rest) g_idle_early = false;
@@ -461,23 +452,23 @@ X86_FUNC(sub_0017B130) {
     uint32_t from = R32(ac + kAnimFrom);
     uint32_t clip = R32(ac + kAnimClip);
     if (R32(ac + kAnimOwner) != Player() || !clip) return __imp__sub_0017B130(ctx, base);
-    int16_t slot = G(clip + kAnimClipFadeSlot);
+    int16_t slot = G<int16_t>(clip + kAnimClipFadeSlot);
     uint32_t fade = clip + kAnimClipFades + slot * kFadeSize;
     __imp__sub_0017B130(ctx, base);
-    if (G(clip + kAnimClipFadeSlot) == slot || FrameShare() >= 1) return;
+    if (G<int16_t>(clip + kAnimClipFadeSlot) == slot || FrameShare() >= 1) return;
     uint32_t weapon = R32(R32(ac + kAnimOwner) + kPlayerWeapon);
     if (weapon && R32(weapon + kWeaponState) == 1) {
         if (!IsFireClip(ReadCString(ac + kAnimName, 13))) g_idle_early = true;
     }
     // from +0x10 3 and its hash: the looping fire clip
     bool fire = from && R32(from + 0x10) == 3 && R32(from + kAnimClipHash) == kFireLoopHash;
-    if (fire && G(fade + 0x24)) W32(fade + 0x18, 2);
+    if (fire && G<uint16_t>(fade + 0x24)) W32(fade + 0x18, 2);
 }
 
 // how long a shot holds an enemy's gun sound: past the wait
 X86_EXTERN_FUNC(__imp__sub_0013FC20);
 X86_FUNC(sub_0013FC20) {
-    float& hold = G(ctx.esp + 8);
+    float& hold = G<float>(ctx.esp + 8);
     hold = WholeFrames(hold, Dt());
     __imp__sub_0013FC20(ctx, base);
 }
@@ -502,14 +493,14 @@ static void ScaleBodies(uint32_t world, float by) {
     static const uint32_t kMove[] = {0x20, 0x24, 0x28, 0x30, 0x34, 0x38, 0xA0, 0xA4, 0xA8};
     uint32_t body = R32(world + kPhysicsBodies);
     for (int left = 4096; body && body != world + kPhysicsBodyEnd && left; left--, body = R32(body + kBodyNext)) {
-        for (uint32_t at : kMove) G(body + at) *= by;
-        // gravity a step squared, an impulse on top of it a step for
+        for (uint32_t at : kMove) G<float>(body + at) *= by;
+        // gravity a step squared, an impulse on top of it a step
         for (int i = 0; i < 12; i += 4) {
-            float g = G(world + kPhysicsGravityStep + i);
-            float& impulse = G(body + kBodyImpulse + i);
+            float g = G<float>(world + kPhysicsGravityStep + i);
+            float& impulse = G<float>(body + kBodyImpulse + i);
             impulse = (impulse - g) * by + g * by * by;
         }
-        G(body + 0x9C) *= by * by;
+        G<float>(body + 0x9C) *= by * by;
     }
 }
 
@@ -523,53 +514,40 @@ void PhysicsTime(X86Context&, uint8_t*) {
     float dt = FrameTime();
     float share = FrameShare();
     if (!world || !(dt > 0)) return;
-    float& step = G(world + kPhysicsStep);
+    float& step = G<float>(world + kPhysicsStep);
     if (step > 0 && step != dt) ScaleBodies(world, dt / step);
     step = dt;
-    G(world + kPhysicsRate) = 1 / dt;
+    G<float>(world + kPhysicsRate) = 1 / dt;
     for (int i = 0; i < 16; i += 4) {
-        G(world + kPhysicsGravityStep + i) = G(world + kPhysicsGravity + i) * dt * dt;
+        G<float>(world + kPhysicsGravityStep + i) = G<float>(world + kPhysicsGravity + i) * dt * dt;
     }
     // a body rests once its move a step stays under a limit for a count of steps: the limit shrinks with the
     // step, the count runs at the game's frame rate
     static float limit;
     static float written;
     static float ticks;
-    float& now = G(world + kPhysicsRestLimit);
+    float& now = G<float>(world + kPhysicsRestLimit);
     if (now != written) limit = now;
     now = written = limit * share * share;
     ticks += share;
     g_rest_tick = ticks >= 1;
     if (g_rest_tick) ticks -= 1;
 }
-
-bool BodyRestTick(X86Context&, uint8_t*) {
-    return g_rest_tick;
-}
+bool BodyRestTick(X86Context&, uint8_t*) { return g_rest_tick; }
 
 // a body's damping is a factor a step, its top speed a move a step
 void BodyDamping(X86Context& ctx, uint8_t*) {
     for (int i = 0; i < 2; i++)
         if (float& keep = ctx.xmm[i].f[0]; keep > 0) keep = std::pow(keep, FrameShare());
 }
-
-void BodyTopSpeed(X86Context& ctx, uint8_t*) {
-    ctx.xmm[1].f[0] *= FrameShare();
-}
+void BodyTopSpeed(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
 
 // a joint lets its bodies turn apart by at most a set angle a step
-void JointTurnCap(X86Context& ctx, uint8_t*) {
-    ctx.xmm[0].f[0] *= FrameShare();
-}
-
-void JointTurnCapNext(X86Context& ctx, uint8_t*) {
-    ctx.xmm[6].f[0] *= FrameShare();
-}
+void JointTurnCap(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= FrameShare(); }
+void JointTurnCapNext(X86Context& ctx, uint8_t*) { ctx.xmm[6].f[0] *= FrameShare(); }
 
 // contacts are searched this far ahead at least: twice the fall of a step at the game's frame rate
-void ContactReach(X86Context& ctx, uint8_t*) {
-    ctx.xmm[1].f[0] = 1 / G(kGameFrameTime);
-}
+void ContactReach(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] = 1 / G<float>(kGameFrameTime); }
 
 // a ragdoll brakes for a wall within 8 frames of its speed: frames of the game's frame rate
 void RagdollLookAhead(X86Context& ctx, uint8_t*) {
@@ -581,14 +559,10 @@ void RagdollLookAhead(X86Context& ctx, uint8_t*) {
 void JointUpperRoom(X86Context& ctx, uint8_t*) {
     if (ctx.xmm[6].f[0] < 0) ctx.xmm[6].f[0] *= FrameShare();
 }
-
 void JointLowerRoom(X86Context& ctx, uint8_t*) {
     if (ctx.xmm[6].f[0] > 0) ctx.xmm[6].f[0] *= FrameShare();
 }
-
-void JointLockedError(X86Context& ctx, uint8_t*) {
-    ctx.xmm[0].f[0] *= FrameShare();
-}
+void JointLockedError(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= FrameShare(); }
 
 // A joint's error, its anchors apart or a turn past its limit or lock, is put right within one step and that push
 // stays on as speed: put right within a frame of the game's frame rate instead.
@@ -608,8 +582,8 @@ constexpr uint32_t kJointTurnHigh = 0x80;
 void JointTurnBack(X86Context& ctx, uint8_t*) {
     float share = FrameShare();
     for (uint32_t axis = 0; axis < 12; axis += 4) {
-        float& low = G(ctx.esp + kJointTurnLow + axis);
-        float& high = G(ctx.esp + kJointTurnHigh + axis);
+        float& low = G<float>(ctx.esp + kJointTurnLow + axis);
+        float& high = G<float>(ctx.esp + kJointTurnHigh + axis);
         bool locked = low == high;
         if (locked || high < 0) high *= share;
         if (locked || low > 0) low *= share;
@@ -628,10 +602,7 @@ X86_FUNC(sub_001690D0) {
     if (g_shard_tick) ticks -= 1;
     __imp__sub_001690D0(ctx, base);
 }
-
-bool ShardTick(X86Context&, uint8_t*) {
-    return g_shard_tick;
-}
+bool ShardTick(X86Context&, uint8_t*) { return g_shard_tick; }
 
 // The sound manager counts its glass shard sound slots (0x2AB27C) and four timers down once a call, made for 30 calls
 // a second: they count once a game frame, or shard sounds pile up at high frame rates
@@ -644,13 +615,11 @@ bool SoundCountdownTick(X86Context&, uint8_t*) {
 }
 
 // xmm1 the gain of a shard's turn a frame
-void ShardSpinGain(X86Context& ctx, uint8_t*) {
-    ctx.xmm[1].f[0] *= FrameShare();
-}
+void ShardSpinGain(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
 
 // xmm1 the new turn a frame: the angle takes a share of it
 void ShardTurn(X86Context& ctx, uint8_t*) {
-    ctx.xmm[0].f[0] = G(ctx.ebx + kShardAngle) + ctx.xmm[1].f[0] * FrameShare();
+    ctx.xmm[0].f[0] = G<float>(ctx.ebx + kShardAngle) + ctx.xmm[1].f[0] * FrameShare();
 }
 
 // xmm0 the gain of a shard's move a frame, then the new move
@@ -662,34 +631,18 @@ void ShardStep(X86Context& ctx, uint8_t*) {
 // LOD and draw distances reach this many times farther: each compare sees a distance that much shorter or a
 // limit that much longer. Characters, props, pickups, ground cover, particles and bullet holes
 static float Reach() { return float(std::clamp(game::Opt().draw_distance, 1u, 16u)); }
-
-void DistanceShorter(X86Context& ctx, uint8_t*) {
-    ctx.xmm[0].f[0] /= Reach();
-}
-
-void DistanceShorterSquared(X86Context& ctx, uint8_t*) {
-    ctx.xmm[0].f[0] /= Reach() * Reach();
-}
-
-void LimitLonger(X86Context& ctx, uint8_t*) {
-    ctx.xmm[0].f[0] *= Reach();
-}
-
-void CharacterDetail(X86Context& ctx, uint8_t*) {
-    ctx.xmm[1].f[0] /= Reach();
-}
-
-void PropLimit(X86Context& ctx, uint8_t*) {
-    ctx.xmm[2].f[0] *= Reach() * Reach();
-}
-
+void DistanceShorter(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach(); }
+void DistanceShorterSquared(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach() * Reach(); }
+void LimitLonger(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= Reach(); }
+void CharacterDetail(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] /= Reach(); }
+void PropLimit(X86Context& ctx, uint8_t*) { ctx.xmm[2].f[0] *= Reach() * Reach(); }
 constexpr uint32_t kParticleFarCut = 0xC4;
 constexpr uint32_t kCameraFarCut = 0x88;
 
-// edi a particle type, xmm1 the view's scale, xmm2 its far cut under the camera's (edx): the fade before it
-// starts as much farther as the cut got
+// edi a particle type, xmm1 the view's scale, xmm2 its far cut under the camera's (edx): the fade before
+// it starts as much farther as the cut got
 void ParticleFade(X86Context& ctx, uint8_t*) {
-    float cut = std::min(G(ctx.edi + kParticleFarCut) * ctx.xmm[1].f[0], G(ctx.edx + kCameraFarCut));
+    float cut = std::min(G<float>(ctx.edi + kParticleFarCut) * ctx.xmm[1].f[0], G<float>(ctx.edx + kCameraFarCut));
     if (Reach() > 1 && cut > 0) ctx.xmm[3].f[0] *= ctx.xmm[2].f[0] / cut;
 }
 
@@ -697,9 +650,7 @@ constexpr uint32_t kViewportFov = 0x6C;  // a copy of the camera's
 
 // eax the viewport, xmm1 one over its view window width: particle fades scale with it. A wide view ends the
 // fade in before the 0.08 near plane and smoke, fire and trails go
-void ParticleView(X86Context& ctx, uint8_t*) {
-    ctx.xmm[1].f[0] /= GameViewShare(G(ctx.eax + kViewportFov));
-}
+void ParticleView(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] /= GameViewShare(G<float>(ctx.eax + kViewportFov)); }
 
 // ground cover and its patches
 constexpr uint32_t kCoverPatches = 0x28;
@@ -713,13 +664,13 @@ void GroundCoverFull(X86Context& ctx, uint8_t*) {
     uint32_t list = ctx.ebx + kCoverPatches;
     uint32_t last = list;
     for (uint32_t at = list + kPatchSize; at < list + kPatchCount * kPatchSize; at += kPatchSize)
-        if (G(at + kPatchDistance) > G(last + kPatchDistance)) last = at;
-    if (!(ctx.xmm[2].f[0] < G(last + kPatchDistance))) return;
+        if (G<float>(at + kPatchDistance) > G<float>(last + kPatchDistance)) last = at;
+    if (!(ctx.xmm[2].f[0] < G<float>(last + kPatchDistance))) return;
     W32(last, R32(ctx.ebp + 8));
-    G(last + kPatchDistance) = ctx.xmm[2].f[0];
-    G(last + 8) = ctx.xmm[1].f[0];
-    G(last + 0xC) = uint8_t(ctx.ecx);
-    G(last + 0xD) = ctx.edx == 2;
+    G<float>(last + kPatchDistance) = ctx.xmm[2].f[0];
+    G<float>(last + 8) = ctx.xmm[1].f[0];
+    G<uint8_t>(last + 0xC) = uint8_t(ctx.ecx);
+    G<uint8_t>(last + 0xD) = ctx.edx == 2;
 }
 
 // draw lists 0, 2 and 3 hold every mesh in reach: a full list drops the rest
@@ -737,15 +688,13 @@ void DrawListRoom(X86Context&, uint8_t*) {
 }
 
 // reload animations start the screen blur
-bool ReloadBlur(X86Context&, uint8_t*) {
-    return game::Opt().reload_blur;
-}
+bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
 
 // the blur holds for the animation's frames times the last frame's time: frames of the game's frame rate instead
 constexpr uint32_t kAnimationFrames = 0x1C;
 void ReloadBlurHold(X86Context& ctx, uint8_t*) {
-    float frames = G(ctx.ecx + kAnimationFrames);
-    ctx.xmm[0].f[0] = frames * G(kGameFrameTime);
+    float frames = G<float>(ctx.ecx + kAnimationFrames);
+    ctx.xmm[0].f[0] = frames * G<float>(kGameFrameTime);
 }
 
 // A or Start on any pad, or the left mouse button, on the press
@@ -779,15 +728,15 @@ void SkipVideo(X86Context&, uint8_t*) {
     uint32_t player = game_object + kFrontEnd + kFilmPlayer;
     uint32_t film = R32(game_object + kCurrentFilm);
     uint32_t state = R32(player + kFilmState);
-    bool background = film < kFilms && G(kFilmTable + film * kFilmEntry + kFilmBehindMenu);
+    bool background = film < kFilms && G<uint8_t>(kFilmTable + film * kFilmEntry + kFilmBehindMenu);
     if (pressed) LOGI("film %u: press in state %X, flags %X", film, state, R32(player + kFilmFlags));
     // a film keeps the frame time of its start: its frame length, and its clock's step
     if (uint32_t movie = R32(player); movie && state >= 4 && state <= kFilmPlaying) {
-        G(movie + kMovieFrameLength) = G(kGameFrameTime);
-        G(movie + kMovieClockStep) = G(game_object + kGameClockStep);
+        G<float>(movie + kMovieFrameLength) = G<float>(kGameFrameTime);
+        G<float>(movie + kMovieClockStep) = G<float>(game_object + kGameClockStep);
     }
     if (background || state < 2 || state > kFilmPlaying) return;
     std::string name = ReadCString(player + kFilmName, 8);
     bool intro = name.rfind("LO_", 0) == 0 || name.rfind("02_", 0) == 0;
-    if (pressed || (game::Opt().skip_intros && intro)) G(player + kFilmStop) = 1;
+    if (pressed || (game::Opt().skip_intros && intro)) G<uint8_t>(player + kFilmStop) = 1;
 }
