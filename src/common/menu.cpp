@@ -276,7 +276,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
              kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor,
              kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
-             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
+             kInvisiblePlayer };
 
 using rows::Kind;
 using rows::Row;
@@ -350,6 +351,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kNoBulletSpread, "NO BULLET SPREAD"},
     {Kind::Heading, -1, "PLAYER"},
     {Kind::Value, kGodMode, "GOD MODE"},
+    {Kind::Value, kInvisiblePlayer, "INVISIBLE PLAYER"},
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP MODE"},                // <-- master on/off (was "ESP MASTER")
@@ -439,6 +441,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kNoRecoil: return &o.no_recoil;
         case kNoBulletSpread: return &o.no_bullet_spread;
         case kGodMode: return &o.god_mode;
+        case kInvisiblePlayer: return &o.invisible_player;
         case kInfiniteMedkits: return &o.infinite_medkits;
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
@@ -738,6 +741,7 @@ void RestoreDefaults(int page) {
         o.no_bullet_spread = none.no_bullet_spread;
         o.game_speed = none.game_speed;
         o.god_mode = none.god_mode;
+        o.invisible_player = none.invisible_player;
         o.infinite_medkits = none.infinite_medkits;
         o.one_hit_kill = none.one_hit_kill;
         o.infinite_grenades = none.infinite_grenades;
@@ -779,6 +783,7 @@ void RestoreDefaults(int page) {
     o.no_bullet_spread = keep.no_bullet_spread;
     o.game_speed = keep.game_speed;
     o.god_mode = keep.god_mode;
+    o.invisible_player = keep.invisible_player;
     o.infinite_medkits = keep.infinite_medkits;
     o.one_hit_kill = keep.one_hit_kill;
     o.infinite_grenades = keep.infinite_grenades;
