@@ -55,22 +55,26 @@ struct Options {
     // effectively zero → one projectile per frame (frame-rate continuous fire). With values 2..8 the wait is
     // divided the usual way, subject to the game's fire-mode pacing.
     uint32_t rapid_fire = 1;
-    // cheat: rapid fire also reaches the four slow fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) and,
-    // with infinite_grenades also on, the grenade throw.
+    // cheat: rapid fire extra drives two things, INDEPENDENTLY:
     //
-    //  - Slow-fire weapons keep their pacing in their own first-person animation; when this is on and
-    //    rapid_fire is any non-OFF level, that animation is cleared at a fraction of frames proportional to
-    //    rapid_fire (2X = every 4th frame, 8X = every frame) so the game accepts the next trigger pull
-    //    sooner. rapid_fire = OFF disables this branch.
-    //  - Grenades are independent: they work with this flag + infinite_grenades ALONE, no rapid_fire level
-    //    required. Each throw's release is detected the instant the grenade count drops (sub_001E8830), and
-    //    the throw animation, the held weapon's animation and the inventory busy flag are cleared right
-    //    after the game's update (in ExtraRapidFire, cheats.cpp), so the next frame starts a fresh throw:
-    //    continuous grenade spam with no pause, no delay, no recovery window, at the animation's own release
-    //    rate (~2-3 throws/sec at 60 fps).
+    //  (1) Slow-fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) — gated by this toggle AND rapid_fire > 1.
+    //      These weapons keep their pacing in their own first-person animation; that animation is cleared at
+    //      a fraction of frames proportional to rapid_fire (2X = every 4th frame, 8X = every frame) so the
+    //      game accepts the next trigger pull sooner. RAPID FIRE OFF disables this branch.
     //
-    // Combined with INFINITE GRENADES, enabling RAPID FIRE EXTRA alone is enough to make grenades spam even
-    // with RAPID FIRE = OFF; the slow-fire weapon path still needs rapid_fire > 1.
+    //  (2) Grenades — FULLY PART OF THIS TOGGLE. Gated by this toggle AND infinite_grenades ALONE — NO
+    //      rapid_fire level required. Grenades throw CONTINUOUSLY, with no pause, no delay, no recovery
+    //      window, even when RAPID FIRE is OFF. Each throw's release is detected the instant the grenade
+    //      count drops (sub_001E8830), and the throw animation, the held weapon's animation and the
+    //      inventory busy flag are cleared right after the game's update (in ExtraRapidFire, cheats.cpp), so
+    //      the next frame starts a fresh throw: ~2-3 throws per second at 60 fps (bounded by the throw
+    //      animation's natural release frame, not by any recovery window).
+    //
+    // NOTE ON GRENADE RATE: the grenade throw rate does NOT scale with rapid_fire level — it is bounded by
+    // the throw animation's natural release frame. Scaling it would require advancing the animation's time
+    // field each frame, which needs the animation controller's time-field offset that this code does not
+    // currently know; writing to the wrong offset would corrupt the animation state and crash the game. What
+    // follows the toggle is CONTINUOUS SPAM independent of the rapid_fire level.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
