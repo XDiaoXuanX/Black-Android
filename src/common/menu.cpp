@@ -107,16 +107,35 @@ const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
-// the ESP display modes: bit 0 = box, bit 1 = line, bit 2 = health bar
+// ESP MODE: 24 modes, bits 0-3 for box / line / health / body, bit 4 for x-ray (which forces body).
+// Entries 16-23 are the eight sensible x-ray variants (body always drawn). Values 24-31 are aliased to
+// 16-23 by the renderer so no entry in this table needs to be past index 23; the panel's stepper is capped
+// at 0-23 too.
 const char* const kEspDisplayNames[] = {
-    "OFF",             // 0: nothing
-    "BOX",             // 1: box only
-    "LINE",            // 2: line only
-    "BOX + LINE",      // 3: box + line
-    "HEALTH",          // 4: health bar only
-    "BOX + HEALTH",    // 5: box + health bar
-    "LINE + HEALTH",   // 6: line + health bar
-    "ALL",             // 7: all three (default)
+    "OFF",                                // 0
+    "BOX",                                // 1
+    "LINE",                               // 2
+    "BOX + LINE",                         // 3
+    "HEALTH",                             // 4
+    "BOX + HEALTH",                       // 5
+    "LINE + HEALTH",                      // 6
+    "ALL",                                // 7
+    "BODY",                               // 8
+    "BODY + BOX",                         // 9
+    "BODY + LINE",                        // 10
+    "BODY + BOX + LINE",                  // 11
+    "BODY + HEALTH",                      // 12
+    "BODY + BOX + HEALTH",                // 13
+    "BODY + LINE + HEALTH",               // 14
+    "ALL + BODY",                         // 15
+    "BODY X-RAY",                         // 16
+    "BODY X-RAY + BOX",                   // 17
+    "BODY X-RAY + LINE",                  // 18
+    "BODY X-RAY + BOX + LINE",            // 19
+    "BODY X-RAY + HEALTH",                // 20
+    "BODY X-RAY + BOX + HEALTH",          // 21
+    "BODY X-RAY + LINE + HEALTH",         // 22
+    "ALL + BODY X-RAY",                   // 23
 };
 
 struct EspPreset {
@@ -265,7 +284,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspBody, kEspFill, kEspColor,
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspFill, kEspColor,
              kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
@@ -345,7 +364,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
     {Kind::Value, kEsp, "ESP LINES"},
     {Kind::Value, kEspDisplay, "ESP MODE"},
-    {Kind::Value, kEspBody, "ESP BODY"},
     {Kind::Value, kEspFill, "ESP FILL"},
     {Kind::Value, kEspColor, "ESP COLOR"},
     {Kind::Value, kEspRed, "ESP RED"},
@@ -436,7 +454,6 @@ bool* ToggleFlag(Settings& s, int id) {
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
         case kEsp: return &o.esp;
-        case kEspBody: return &o.esp_body;
         case kEspFill: return &o.esp_fill;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
@@ -539,8 +556,9 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
         case kEspDisplay:
-            if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 7, 1, step));
-            std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 7u)]);
+            // 24 modes (0-23): the 16 base combinations plus 8 x-ray variants (body always on in those)
+            if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 23, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 23u)]);
             return true;
         case kEspColor: {
             uint32_t preset = std::clamp(o.esp_color, 0u, uint32_t(kEspPresetCount));
@@ -740,7 +758,6 @@ void RestoreDefaults(int page) {
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
         o.esp_display = none.esp_display;
-        o.esp_body = none.esp_body;
         o.esp_fill = none.esp_fill;
         o.esp_color = none.esp_color;
         o.esp_red = none.esp_red;
@@ -783,7 +800,6 @@ void RestoreDefaults(int page) {
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
     o.esp_display = keep.esp_display;
-    o.esp_body = keep.esp_body;
     o.esp_fill = keep.esp_fill;
     o.esp_color = keep.esp_color;
     o.esp_red = keep.esp_red;
