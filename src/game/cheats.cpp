@@ -1,6 +1,6 @@
-// The cheats page's god mode, one-hit kill, infinite grenades and extra rapid fire. The rest live where the
-// game already has a hook: infinite ammo, rapid fire and no recoil with the weapon's, game speed with the
-// frame time
+// The cheats page's god mode, one-hit kill, infinite grenades, extra rapid fire and wallbang. The rest live
+// where the game already has a hook: infinite ammo, rapid fire and no recoil with the weapon's, game speed
+// with the frame time
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -9,6 +9,7 @@
 #include <string>
 
 #include "common/options.h"
+#include "core/log.h"          // LOGI for the wallbang diagnostic
 #include "game/layout.h"
 #include "xdk/hle.h"
 
@@ -25,41 +26,20 @@ constexpr uint32_t kCharDying = 0x384;     // not 0 once it is killed
 constexpr uint32_t kCharInvulnerable = 0x8F2;
 constexpr uint32_t kPlayerKind = 2;
 
-constexpr uint32_t kDifficulty = 0x2014C;  // in the game object, 0 easy to 3 black ops
+constexpr uint32_t kDifficulty = 0x2014C;
 constexpr float kFullHealth[] = {1200.0f, 750.0f};
 
-// ---- extra rapid fire ------------------------------------------------------------------------------
-// Slow-fire weapons (RPG, GRL, Walther 2000 = SNR/SN5) keep the throttle-based clear: the held weapon's
-// animation is cleared at a fraction of frames proportional to rapid_fire (2X = every 4th frame, 8X = every
-// frame). This is the version from the recovery-window revert and works reliably.
-//
-// Grenades are different. The throw animation lives on the CHARACTER at +0xD8 (there is no grenade weapon
-// object), and it must be allowed to play until the "release" event fires (sub_001E8830 receives it, the
-// grenade count drops). If we cleared the animation before that event, the animation would never reach its
-// release frame and no grenade would come out. If we cleared after a fixed recovery window, the window might
-// be shorter than the animation's natural release frame and the same "no grenade" problem would occur.
-//
-// The fix here is to CLEAR ONLY WHEN THE EVENT HAS JUST FIRED. sub_001E8830 sets g_throw_just_fired on every
-// release (count drop). ExtraRapidFire consumes the flag with exchange(false) and clears the character's
-// animation, the held weapon's animation, and the inventory busy flag exactly once per throw. The result is:
-//   frame N   : player presses throw, animation starts
-//   frame N+X : animation reaches release, sub_001E8830 fires → count drop → g_throw_just_fired = true
-//   frame N+X : ExtraRapidFire runs (after update) → clears animation → flag back to false
-//   frame N+X+1: game sees animation idle, throw button still held → new throw starts
-//   cycle repeats every ~X frames, where X is the animation's natural release frame (~20-30 at 60 fps)
-// This gives 2-3 throws per second (frame-rate limited only by the animation's own release timing, not by a
-// fixed recovery window). If it turns out the game is edge-triggered (needs a release + re-press between
-// throws), the animation clear would allow it but each throw would still need the player to tap the button;
-// in that case the log will show only one throw despite holding the button and we will need to find a
-// different approach (a diagnostic logging pass to locate the throw request field).
+// weapon manager + slow-fire detection
 constexpr uint32_t kWeaponManager = 0x2D12D0;
 constexpr uint32_t kTableCount = 1;
 constexpr uint32_t kTableEntries = 4;
 constexpr uint32_t kEntrySize = 0x20;
 constexpr uint32_t kWeaponType = 0;
 constexpr uint32_t kWeaponAnim = 0xD8;
+constexpr uint32_t kWeaponData = 0xEC;     // offset from weapon object to its data block pointer
 constexpr uint32_t kPlayerInventory = 0x278;
 constexpr uint32_t kInvOwner = 0x1C;
+constexpr uint32_t kInvSlots = 0x20;       // array of two weapon slot pointers
 constexpr uint32_t kInvHeld = 0x24;
 constexpr uint32_t kInvSwitchTo = 0x28;
 constexpr uint32_t kInvRequest = 0x38;
@@ -67,11 +47,28 @@ constexpr uint32_t kInvBusy = 0xB4;
 constexpr uint32_t kSuppressorBusy = 0x13;
 constexpr int kMaxRapidLevel = 8;
 int g_slowfire_counter = kMaxRapidLevel;
-// Set true by sub_001E8830 when the grenade count drops (a throw just fired); ExtraRapidFire consumes it
-// to clear the throw animations right after the release. Using exchange(false) means the clears happen
-// exactly once per throw event, not on every frame — which is what lets the animation play its natural
-// course up to the release frame before we reset it.
 std::atomic<bool> g_throw_just_fired{false};
+
+// ---- wallbang -------------------------------------------------------------------------------------
+// Every weapon carries a `penetration` float in its data block. Typical values are 0.5-1.0 in COD2-derived
+// weapon defs (pistol 0.3, rifle 0.7, sniper 1.0). Raising it to kWallbangValue makes every bullet pass
+// through any wall. Damage (20-50), range (500+), clip size, and ammo type live in the same block but at
+// different numeric ranges, so a value filter of 0.3..1.5 catches penetration and recoil but skips damage,
+// range, clip and ammo.
+//
+// Offsets scanned: 0x3C..0xB0, step 4, skipping 0x60 and 0x64 (clip size and ammo type — known ints).
+// The value stored is kWallbangValue (10.0). On first use per level, the game log shows exactly which
+// offsets were modified:
+//   wallbang: modified [slot0: 3C=0.55 48=0.70 5C=0.50 | slot1: 48=0.70 |]
+// so if a side effect appears (recoil kicks wildly, fire rate slow), the log tells us where to narrow.
+constexpr float kWallbangValue = 10.0f;
+constexpr uint32_t kPenetrationCandidates[] = {
+    0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50, 0x54, 0x58, 0x5C,
+    // 0x60 and 0x64 skipped (clip size, ammo type)
+    0x68, 0x6C, 0x70, 0x74, 0x78, 0x7C, 0x80, 0x84, 0x88, 0x8C, 0x90,
+    0x94, 0x98, 0x9C, 0xA0, 0xA4, 0xA8, 0xAC, 0xB0
+};
+bool g_wallbang_logged = false;
 
 uint32_t Player() { return R32(kWorld) ? R32(kWorld) + kWorldPlayer : 0; }
 
@@ -133,11 +130,47 @@ bool SlowFireHeld(uint32_t weapon) {
     return kSlowCodes.count(code) != 0;
 }
 
-// Called from the player's update AFTER the game's own update (see sub_001E5FA0 below). Runs two jobs:
-//  (1) Slow fire weapons: throttled by rapid_fire level (unchanged from the recovery-window version).
-//  (2) Grenades: clear the throw animation and the busy flag exactly once per throw event, immediately
-//      after the event fires. This is the minimum work needed to allow the next throw without breaking
-//      the animation that must complete to actually release the grenade.
+// ---- ApplyWallbang: paksa penetrasi senjata ke nilai maksimum --------------------------------------
+void ApplyWallbang() {
+    if (!game::Opt().wallbang) return;
+    uint32_t me = Player();
+    if (!me || R32(me + kCharDying)) return;
+    uint32_t inv = me + kPlayerInventory;
+    if (R32(inv + kInvOwner) != me) return;
+    uint32_t slots = R32(inv + kInvSlots);
+    if (!slots) return;
+    bool log_now = !g_wallbang_logged;
+    char buf[512] = {0};
+    int pos = 0;
+    for (int i = 0; i < 2; i++) {
+        uint32_t weapon = R32(slots + uint32_t(i) * 4);
+        if (!weapon) continue;
+        uint32_t data = R32(weapon + kWeaponData);
+        if (!data) continue;
+        if (log_now && pos < int(sizeof(buf)) - 16) {
+            pos += std::snprintf(buf + pos, sizeof(buf) - pos, "slot%d:", i);
+        }
+        for (uint32_t off : kPenetrationCandidates) {
+            float cur = G<float>(data + off);
+            if (cur > 0.3f && cur < 1.5f) {
+                if (log_now && pos < int(sizeof(buf)) - 16) {
+                    pos += std::snprintf(buf + pos, sizeof(buf) - pos, " %X=%.2f",
+                                         unsigned(off), cur);
+                }
+                G<float>(data + off) = kWallbangValue;
+            }
+        }
+        if (log_now && pos < int(sizeof(buf)) - 1) {
+            pos += std::snprintf(buf + pos, sizeof(buf) - pos, " |");
+        }
+    }
+    if (log_now && pos > 0) {
+        LOGI("wallbang: modified [%s]", buf);
+        g_wallbang_logged = true;
+    }
+}
+
+// ---- ExtraRapidFire: continuous slow-fire + throw-event grenade clear ------------------------------
 void ExtraRapidFire() {
     const game::Options& o = game::Opt();
     if (!o.rapid_fire_extra || o.rapid_fire <= 1) {
@@ -157,8 +190,6 @@ void ExtraRapidFire() {
         g_slowfire_counter = kMaxRapidLevel;
         return;
     }
-
-    // (1) Slow-fire weapons — throttled by rapid_fire level, unchanged
     g_slowfire_counter -= int(o.rapid_fire);
     if (g_slowfire_counter <= 0) {
         g_slowfire_counter = kMaxRapidLevel;
@@ -169,10 +200,6 @@ void ExtraRapidFire() {
             }
         }
     }
-
-    // (2) Grenade — clear exactly once per throw event (right after the release). The safety check on the
-    // animation value prevents clearing anything larger than 0x1000, which would be a pointer rather than
-    // an animation id (would crash the game if we wrote 0 to it).
     if (o.infinite_grenades && g_throw_just_fired.exchange(false)) {
         uint32_t held = R32(inv + kInvHeld);
         if (held) {
@@ -188,9 +215,10 @@ void ExtraRapidFire() {
 
 }  // namespace
 
-// The player's update. God mode runs BEFORE the game's update so health is full and the invulnerable flag is
-// set when the game checks damage. Extra rapid fire runs AFTER the game's update so its clears are the LAST
-// writes of the frame and the game starts the next frame with animation = 0 (idle).
+// The player's update. God mode runs BEFORE the game's update (health full and invulnerable flag set when
+// the game checks damage). Wallbang runs BEFORE the game's update so the game sees max penetration when it
+// processes the shot. Extra rapid fire runs AFTER the game's update so its clears are the LAST writes of the
+// frame.
 X86_EXTERN_FUNC(__imp__sub_001E5FA0);
 X86_FUNC(sub_001E5FA0) {
     uint32_t me = ctx.ecx;
@@ -205,10 +233,11 @@ X86_FUNC(sub_001E5FA0) {
             G<uint8_t>(me + kCharInvulnerable) = 0;
             g_invulnerable = false;
         }
+        ApplyWallbang();   // <-- wallbang: set max penetration on both slots every frame
     }
     __imp__sub_001E5FA0(ctx, base);
     if (is_player) {
-        ExtraRapidFire();  // AFTER the game update: our clears are the last writes of the frame
+        ExtraRapidFire();  // <-- after the game update: our clears are the last writes of the frame
     }
 }
 
@@ -220,12 +249,8 @@ X86_FUNC(sub_001E74B0) {
     Spare(doomed);
 }
 
-// A character's animation event (the throw takes a grenade). With infinite_grenades on, we restore the count
-// and set g_throw_just_fired so ExtraRapidFire clears the throw animations on this same frame — right after
-// the release — so the next frame can start a fresh throw. The animation is NOT cleared here directly: this
-// hook runs INSIDE the game's player update, and clearing mid-update would be overwritten by the game's own
-// animation state machine (sub_0017B130 in hooks.cpp). Doing it in ExtraRapidFire after the update makes the
-// clear the last write of the frame and lets the game start the next frame with animation = 0.
+// A character's animation event (the throw takes a grenade). We restore the count and set g_throw_just_fired
+// so ExtraRapidFire clears the throw animations on this same frame right after the release.
 X86_EXTERN_FUNC(__imp__sub_001E8830);
 X86_FUNC(sub_001E8830) {
     uint32_t who = R32(ctx.esp + 0xC);
