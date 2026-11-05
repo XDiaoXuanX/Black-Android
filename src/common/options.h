@@ -89,15 +89,6 @@ struct Options {
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
     uint32_t game_speed = 100;  // cheat: percent of the game's speed, menus and films keep theirs
     bool god_mode = false;  // cheat: no hit takes the player's health
-    // cheat: enemies cannot see the player — no detection, no tracking, no shooting at the player. The
-    // player's "notarget" byte (cheats.cpp kCharNotarget, right after the invulnerable byte at +0x8F2) is
-    // set every frame in the player update BEFORE the game's own update, so the AI reads it that same
-    // frame. Independent of god mode: the player still takes damage if god mode is off, but enemies do
-    // not aim at the player. Turning the toggle off restores the byte every frame (idempotent).
-    // NOTE: kCharNotarget is a best-guess offset. If enemies still shoot at the player with this on, the
-    // offset needs to be found by RE (diffing the character at pickups / behind cover vs in the open) —
-    // the flag is set as documented but the game does not consult it there.
-    bool invisible_player = false;
     bool one_hit_kill = false;  // cheat: any hit of the player's bullets kills
     bool infinite_grenades = false;  // cheat: throwing a grenade keeps the count
     bool infinite_medkits = false;  // cheat: using a medkit keeps the count (src/game/weapons.cpp)
