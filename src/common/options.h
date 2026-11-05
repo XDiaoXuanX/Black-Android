@@ -66,7 +66,15 @@ struct Options {
     bool infinite_medkits = false;  // cheat: using a medkit keeps the count (src/game/weapons.cpp)
     bool unlock_levels = false;  // cheat: every mission open on every difficulty, the save is left as it is
     bool unlock_black_ops = false;  // cheat: Black Ops open on the missions open on another difficulty, the same
-    bool esp = false;  // cheat: a line from the bottom of the screen and a box to each living enemy
+    bool esp = false;  // cheat: the ESP (see esp_display, esp_health) draws over each living enemy
+    // cheat: what the ESP draws, when esp is on. 0 draws both the line to the enemy and the box round it,
+    // 1 draws only the box, 2 draws only the line. The health bar below is independent: it draws above the
+    // head whenever esp_health is on, whichever display mode is chosen.
+    uint32_t esp_display = 0;
+    // cheat: a small health bar above each enemy's head, full width for kEnemyRefHealth HP (250) or more,
+    // proportional below that. Green above 66% of the reference, yellow above 33%, red below. Draws on top
+    // of whatever esp_display selects; only active when esp is on.
+    bool esp_health = true;
     // cheat: colour of the ESP lines. 0..7 a preset from kEspPresets (WHITE, RED, GREEN, CYAN, YELLOW, MAGENTA,
     // ORANGE, PURPLE), 8 CUSTOM: the esp_red / esp_green / esp_blue below. Stepping the preset writes its
     // colour into those three fields, and any manual change of them switches the preset back to CUSTOM, so the
