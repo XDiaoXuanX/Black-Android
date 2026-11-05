@@ -109,10 +109,9 @@ const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", 
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
 
 // RAPID FIRE levels the panel steps through. 1 = OFF, then 2X..8X, then doubling up to 512X, then the
-// INFINITE sentinel (999). Any value >= 2 activates continuous firing in src/game/cheats.cpp
-// ExtraRapidFire() (every fire / throw cooldown cleared every frame), so 2X and INFINITE give the same
-// observable rate — the levels above 8 exist so the user can pick a big number to see; the practical cap
-// is one projectile per frame, so no level can actually exceed frame rate.
+// INFINITE sentinel (999). hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire, so 999
+// makes the wait effectively zero → one projectile per frame (frame-rate continuous fire) for weapons
+// whose pacing is in the wait field. Values 2..8 keep the original meaningful multipliers.
 constexpr uint32_t kRapidFireLevels[] = {
     1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128, 256, 512, 999,
 };
@@ -121,33 +120,12 @@ const char* const kRapidFireNames[] = {
     "16X",  "32X",  "64X",  "128X", "256X", "512X", "INFINITE",
 };
 
-// the ESP display modes: bit 0 = box, bit 1 = line, bit 2 = health bar, bit 3 = body silhouette,
-// bit 4 = x-ray (implies body). 24 entries cover every sensible combination of the five flags.
+// the ESP display modes: bit 0 = line, bit 1 = health bar (2 bits, 4 combinations)
 const char* const kEspDisplayNames[] = {
-    "OFF",                                // 0
-    "BOX",                                // 1
-    "LINE",                               // 2
-    "BOX + LINE",                         // 3
-    "HEALTH",                             // 4
-    "BOX + HEALTH",                       // 5
-    "LINE + HEALTH",                      // 6
-    "ALL",                                // 7
-    "BODY",                               // 8
-    "BODY + BOX",                         // 9
-    "BODY + LINE",                        // 10
-    "BODY + BOX + LINE",                  // 11
-    "BODY + HEALTH",                      // 12
-    "BODY + BOX + HEALTH",                // 13
-    "BODY + LINE + HEALTH",               // 14
-    "ALL + BODY",                         // 15
-    "BODY X-RAY",                         // 16
-    "BODY X-RAY + BOX",                   // 17
-    "BODY X-RAY + LINE",                  // 18
-    "BODY X-RAY + BOX + LINE",            // 19
-    "BODY X-RAY + HEALTH",                // 20
-    "BODY X-RAY + BOX + HEALTH",          // 21
-    "BODY X-RAY + LINE + HEALTH",         // 22
-    "ALL + BODY X-RAY",                   // 23
+    "OFF",             // 0
+    "LINE",            // 1
+    "HEALTH",          // 2
+    "LINE + HEALTH",   // 3 (default)
 };
 
 struct EspPreset {
@@ -296,7 +274,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspFill, kEspColor,
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor,
              kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
@@ -374,9 +352,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
-    {Kind::Value, kEsp, "ESP LINES"},
-    {Kind::Value, kEspDisplay, "ESP MODE"},
-    {Kind::Value, kEspFill, "ESP FILL"},
+    {Kind::Value, kEsp, "ESP MODE"},                // <-- master on/off (was "ESP MASTER")
+    {Kind::Value, kEspDisplay, "ESP MODE TARGET"},  // <-- selector mode (was "ESP MODE")
     {Kind::Value, kEspColor, "ESP COLOR"},
     {Kind::Value, kEspRed, "ESP RED"},
     {Kind::Value, kEspGreen, "ESP GREEN"},
@@ -466,7 +443,6 @@ bool* ToggleFlag(Settings& s, int id) {
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
         case kEsp: return &o.esp;
-        case kEspFill: return &o.esp_fill;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kAimbot: return &o.aimbot;
@@ -563,16 +539,13 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
         case kRapidFire: {
-            // step through the discrete levels in kRapidFireLevels; the top of the table (999) is
-            // displayed as INFINITE. Any value >= 2 activates continuous mode in cheats.cpp.
             int i = StepTable(kRapidFireLevels, o.rapid_fire, step);
             std::snprintf(text, sizeof(text), "%s", kRapidFireNames[i]);
             return true;
         }
         case kEspDisplay:
-            // 24 modes (0-23): the 16 base combinations plus 8 x-ray variants (body always on in those)
-            if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 23, 1, step));
-            std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 23u)]);
+            if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 3, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 3u)]);
             return true;
         case kEspColor: {
             uint32_t preset = std::clamp(o.esp_color, 0u, uint32_t(kEspPresetCount));
@@ -772,7 +745,6 @@ void RestoreDefaults(int page) {
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
         o.esp_display = none.esp_display;
-        o.esp_fill = none.esp_fill;
         o.esp_color = none.esp_color;
         o.esp_red = none.esp_red;
         o.esp_green = none.esp_green;
@@ -814,7 +786,6 @@ void RestoreDefaults(int page) {
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
     o.esp_display = keep.esp_display;
-    o.esp_fill = keep.esp_fill;
     o.esp_color = keep.esp_color;
     o.esp_red = keep.esp_red;
     o.esp_green = keep.esp_green;
