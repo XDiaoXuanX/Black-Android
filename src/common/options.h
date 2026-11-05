@@ -57,24 +57,33 @@ struct Options {
     uint32_t rapid_fire = 1;
     // cheat: rapid fire extra drives two things, INDEPENDENTLY:
     //
-    //  (1) Slow-fire weapons (RPG, GRL, Walther 2000 = SNR / SN5) — gated by this toggle AND rapid_fire > 1.
-    //      These weapons keep their pacing in their own first-person animation; that animation is cleared at
-    //      a fraction of frames proportional to rapid_fire (2X = every 4th frame, 8X = every frame) so the
-    //      game accepts the next trigger pull sooner. RAPID FIRE OFF disables this branch.
+    //  (1) Slow-fire weapons — gated by this toggle AND rapid_fire > 1. The held weapon's animation is
+    //      cleared at a fraction of frames proportional to rapid_fire (2X = every 4th frame, 8X = every
+    //      frame) so the game accepts the next trigger pull sooner. RAPID FIRE OFF disables this branch.
+    //      The weapons handled here:
+    //        - RPG, GRL   single-shot launchers with slow reload
+    //        - SNR, SN5   Walther 2000 bolt action (silenced / unsilenced)
+    //        - BNS        M16A2 + M203: the M203 UNDER-BARREL GRENADE LAUNCHER's break-open / load / close
+    //                     animation. The M16 primary fire is already fast via rapid_fire; the M203 alternate
+    //                     fire is a single-shot launcher, and clearing its animation lets it fire
+    //                     CONTINUOUSLY, WITHOUT PAUSE, WITHOUT DELAY, even though each grenade launches
+    //                     individually. Requires INFINITE AMMO (the M203's alt ammo at +0xF8) so the
+    //                     launcher does not run dry; INFINITE GRENADES is NOT needed for the M203 (that is
+    //                     for hand grenades only).
     //
-    //  (2) Grenades — FULLY PART OF THIS TOGGLE. Gated by this toggle AND infinite_grenades ALONE — NO
-    //      rapid_fire level required. Grenades throw CONTINUOUSLY, with no pause, no delay, no recovery
-    //      window, even when RAPID FIRE is OFF. Each throw's release is detected the instant the grenade
-    //      count drops (sub_001E8830), and the throw animation, the held weapon's animation and the
-    //      inventory busy flag are cleared right after the game's update (in ExtraRapidFire, cheats.cpp), so
-    //      the next frame starts a fresh throw: ~2-3 throws per second at 60 fps (bounded by the throw
-    //      animation's natural release frame, not by any recovery window).
+    //  (2) Hand grenades — gated by this toggle AND infinite_grenades ALONE. NO rapid_fire level required:
+    //      grenades throw continuously, with no pause, no delay, no recovery window, even when RAPID FIRE
+    //      is OFF. Each throw's release is detected the instant the count drops (sub_001E8830), and the
+    //      throw animation, the held weapon's animation and the inventory busy flag are cleared right after
+    //      the game's update (in ExtraRapidFire, cheats.cpp), so the next frame starts a fresh throw:
+    //      ~2-3 throws per second at 60 fps (bounded by the throw animation's natural release frame).
     //
-    // NOTE ON GRENADE RATE: the grenade throw rate does NOT scale with rapid_fire level — it is bounded by
-    // the throw animation's natural release frame. Scaling it would require advancing the animation's time
-    // field each frame, which needs the animation controller's time-field offset that this code does not
-    // currently know; writing to the wrong offset would corrupt the animation state and crash the game. What
-    // follows the toggle is CONTINUOUS SPAM independent of the rapid_fire level.
+    // NOTE ON GRENADE RATE: neither the hand grenade throw rate nor the M203 fire rate scale with
+    // rapid_fire level — both are bounded by their animation's natural release frames. What follows the
+    // toggle is CONTINUOUS SPAM independent of the rapid_fire level. Scaling the rate would require
+    // advancing the animation's time field each frame, which needs the animation controller's time-field
+    // offset that this code does not currently know; writing to the wrong offset would corrupt the
+    // animation state and crash the game.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
