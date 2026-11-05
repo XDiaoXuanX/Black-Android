@@ -55,7 +55,7 @@ struct Options {
     // effectively zero → one projectile per frame (frame-rate continuous fire). With values 2..8 the wait is
     // divided the usual way, subject to the game's fire-mode pacing.
     uint32_t rapid_fire = 1;
-    // cheat: rapid fire extra drives two things, INDEPENDENTLY:
+    // cheat: rapid fire extra drives several things INDEPENDENTLY:
     //
     //  (1) Slow-fire weapons — gated by this toggle AND rapid_fire > 1. The held weapon's animation is
     //      cleared at a fraction of frames proportional to rapid_fire (2X = every 4th frame, 8X = every
@@ -78,12 +78,20 @@ struct Options {
     //      the game's update (in ExtraRapidFire, cheats.cpp), so the next frame starts a fresh throw:
     //      ~2-3 throws per second at 60 fps (bounded by the throw animation's natural release frame).
     //
-    // NOTE ON GRENADE RATE: neither the hand grenade throw rate nor the M203 fire rate scale with
-    // rapid_fire level — both are bounded by their animation's natural release frames. What follows the
-    // toggle is CONTINUOUS SPAM independent of the rapid_fire level. Scaling the rate would require
-    // advancing the animation's time field each frame, which needs the animation controller's time-field
-    // offset that this code does not currently know; writing to the wrong offset would corrupt the
-    // animation state and crash the game.
+    //  (3) Magnum with a grenade launcher — gated by this toggle ALONE. The MGN/MG5 (Magnum) has no alternate
+    //      fire in the game, but this toggle gives it one: a BNS donor weapon is created (owned by the player,
+    //      not in any slot) and the Magnum's alt ammo pointer (+0xF8) is pointed to the donor's M203 alt ammo
+    //      struct. Firing alt then launches M203 grenades from the Magnum. Requires INFINITE AMMO so the
+    //      shared alt ammo (the M203's clip) stays full; INFINITE GRENADES is NOT needed (that is for hand
+    //      grenades only). Turning this toggle off does NOT remove the M203 from a Magnum already patched
+    //      (the alt ammo pointer stays set until the Magnum is replaced); turning it back on patches any
+    //      Magnum in a slot that lacks alt ammo. The patch is applied by weapons.cpp (GiveMagnumM203) and
+    //      maintained every tick by WeaponsTick so a level reload re-patches automatically.
+    //
+    // NOTE ON RATE: neither the hand grenade throw rate nor the M203 fire rate scale with rapid_fire level —
+    // both are bounded by their animation's natural release frames. What follows the toggle is CONTINUOUS
+    // SPAM independent of the rapid_fire level for hand grenades, and whatever rate the game applies for the
+    // Magnum's M203 (bounded by the Magnum's alt fire timing, which the game uses for its own fire mode).
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
