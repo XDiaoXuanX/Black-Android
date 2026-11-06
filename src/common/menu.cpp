@@ -194,21 +194,11 @@ std::map<std::string, bool> g_collapsed;
 // if collapsed (the caller skips them until the next heading). The whole heading is one full-width clickable
 // strip: hovering highlights it, clicking toggles collapse. A ▶ / ▼ triangle on the left shows the state.
 //
-// Sizing chain (all three multiply together):
-//   1. em (ImGui::GetFontSize) — already scaled by io.FontGlobalScale, which is set to
-//      InterfaceScale() = base * cheat_panel_size/100. So em scales with panel_size.
-//   2. cheat_heading_size/100 — the user's per-heading setting (50..1000%).
-//   3. panel_scale — extra panel_size multiplier so headings grow FASTER than the window at high
-//      panel sizes: at 200% panel + 100% heading the heading is 4x the base size (2x from em, 2x from
-//      the extra multiplier), while the window is only 2x — so the heading looks visibly bigger
-//      relative to the panel too, not just proportionally the same.
-// Capped at 6x em to prevent overflow at extreme combinations (heading_size=1000% + panel_size=300%).
+// The heading text size follows em, which is ImGui::GetFontSize() — already scaled by io.FontGlobalScale
+// (= InterfaceScale() = base * cheat_panel_size/100). So the heading grows/shrinks with panel size
+// automatically; no per-element setting needed.
 bool Section(const char* title) {
     float em = ImGui::GetFontSize();
-    const game::Options& opts = game::Opt();
-    float panel_scale = float(std::clamp(opts.cheat_panel_size, 50u, 300u)) / 100.0f;
-    float heading_scale = float(std::clamp(opts.cheat_heading_size, 50u, 1000u)) / 100.0f;
-    float heading_font_size = std::min(em * heading_scale * panel_scale, em * 6.0f);
     ImGui::Dummy(ImVec2(0, em * 0.3f));
     std::string key(title);
     bool& collapsed = g_collapsed[key];
@@ -216,19 +206,18 @@ bool Section(const char* title) {
     ImGui::PushID(title);
     ImVec2 start = ImGui::GetCursorScreenPos();
     float width = ImGui::GetContentRegionAvail().x;
-    float height = std::max(em * 1.3f, heading_font_size * 1.3f);
+    float height = em * 1.3f;
     if (ImGui::InvisibleButton("##head", ImVec2(width, height))) collapsed = !collapsed;
     if (ImGui::IsItemHovered()) {
         ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                                                    ImGui::GetColorU32(ImGuiCol_Header));
     }
-    // triangle + title drawn directly on the window draw list; both scale with heading_font_size so
-    // the heading block stays visually consistent at any size
+    // triangle + title drawn directly on the window draw list
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImU32 colour = ImGui::GetColorU32(kHeading);
-    float sz = heading_font_size * 0.27f;
-    float cx = start.x + heading_font_size * 0.5f;
+    float cx = start.x + em * 0.6f;
     float cy = start.y + height * 0.5f;
+    float sz = em * 0.35f;
     if (collapsed) {
         // ▶ right-pointing: section is closed
         draw->AddTriangleFilled(ImVec2(cx - sz * 0.5f, cy - sz), ImVec2(cx - sz * 0.5f, cy + sz),
@@ -238,9 +227,8 @@ bool Section(const char* title) {
         draw->AddTriangleFilled(ImVec2(cx - sz, cy - sz * 0.5f), ImVec2(cx + sz, cy - sz * 0.5f),
                                  ImVec2(cx, cy + sz * 0.7f), colour);
     }
-    float text_y = start.y + (height - heading_font_size) * 0.5f;
-    draw->AddText(ImGui::GetFont(), heading_font_size, ImVec2(start.x + heading_font_size * 1.2f, text_y), colour,
-                  Ui(title).c_str());
+    float text_y = start.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+    draw->AddText(ImVec2(start.x + em * 1.4f, text_y), colour, Ui(title).c_str());
     // restore the layout cursor past the heading row so the separator lands under it
     ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + height));
     ImGui::PopID();
@@ -294,55 +282,11 @@ void FillItem() {
 // Each option row: label on the left, "<" button, value text, ">" button on the right. Both buttons toggle
 // a boolean row (INFINITE AMMO, GOD MODE, …) — a boolean row ignores the step sign (Flip flips on any
 // nonzero step) — and step a multi-value row (RAPID FIRE, GAME SPEED, ESP COLOR, AIMBOT TARGET, …) by -1
-// / +1.
-//
-// Sizing chain (all three multiply together):
-//   1. em / base_h — already scaled by io.FontGlobalScale = base * cheat_panel_size/100. So the base
-//      sizes scale with panel_size.
-//   2. cheat_{button,label,gap}_size/100 — the user's per-element settings.
-//   3. panel_scale — extra panel_size multiplier so buttons/labels/gaps grow FASTER than the window at
-//      high panel sizes: at 200% panel + 100% button the button is 4x the base size (2x from em via
-//      base_h, 2x from the extra multiplier), while the window is only 2x — so the button looks visibly
-//      bigger relative to the panel too, not just proportionally the same.
-// Safety caps prevent overflow at extreme combinations (1000% element + 300% panel):
-//   - btn_size    capped at row_w / 4   (two buttons = at most half the row)
-//   - label_size  capped at em * 6      (label doesn't grow unboundedly past 6x base)
-//   - gap         no cap (gaps don't overflow the row height)
+// / +1. Button size, gap and label size come from em/base_h (already scaled by panel size via
+// InterfaceScale), so everything grows/shrinks together with the panel — no per-element settings.
 int OptionRow(const char* label, const char* value) {
     const ImGuiStyle& style = ImGui::GetStyle();
-    const game::Options& opts = game::Opt();
-    float em = ImGui::GetFontSize();
-    float base_h = ImGui::GetFrameHeight();
-
-    float panel_scale = float(std::clamp(opts.cheat_panel_size, 50u, 300u)) / 100.0f;
-    float size_pct = float(std::clamp(opts.cheat_button_size, 50u, 1000u)) / 100.0f;
-    float gap_pct = float(std::clamp(opts.cheat_button_gap, 0u, 1000u)) / 100.0f;
-    float label_scale = float(std::clamp(opts.cheat_label_size, 50u, 1000u)) / 100.0f;
-
-    RowBox box;
-    box.em = em;
-    box.row_w = ImGui::GetContentRegionAvail().x;
-    box.value_w = em * kValueEms;
-
-    // btn_size gets the extra panel_scale multiplier and a safety cap at 1/4 of the row width so two
-    // buttons never eat more than half the row (label + value still fit).
-    float btn_size_raw = base_h * size_pct * panel_scale;
-    float btn_size = std::min(btn_size_raw, box.row_w * 0.25f);
-    // gap gets the extra multiplier but no cap.
-    float gap = style.ItemSpacing.x * gap_pct * panel_scale;
-    // label gets the extra multiplier, capped at 6x em so a 1000% setting doesn't overflow the row.
-    float label_font_size = std::min(em * label_scale * panel_scale, em * 6.0f);
-
-    box.row_h = std::max({base_h, btn_size, label_font_size * 1.25f});
-    box.block_w = btn_size * 2 + box.value_w + gap * 2;
-    box.row_x = ImGui::GetCursorPosX();
-    box.row_y = ImGui::GetCursorPosY();
-
-    // Vertical positions: value and label centred on the row's band; buttons centred on their own side.
-    float value_text_y = box.row_y + (box.row_h - em) * 0.5f;
-    float label_y = box.row_y + (box.row_h - label_font_size) * 0.5f;
-    float btn_y = box.row_y + (box.row_h - btn_size) * 0.5f;
-
+    RowBox box = MeasureRow();
     ImGui::PushID(label);
     int step = 0;
     ImGui::Selectable("##row", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
@@ -351,31 +295,18 @@ int OptionRow(const char* label, const char* value) {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) step = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) step = 1;
     }
-
-    // Label — drawn via the low-level AddText overload so its font size can scale independently of the
-    // value text and the buttons.
-    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), label_font_size,
-                                        ImVec2(box.row_x + style.ItemInnerSpacing.x, label_y),
-                                        ImGui::GetColorU32(ImGuiCol_Text), Ui(label).c_str());
-
+    RowLabel(box, label);
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav | ImGuiItemFlags_ButtonRepeat, true);
     float block_x = box.row_x + box.row_w - box.block_w;
-
-    // "<" — decrement / toggle
-    ImGui::SetCursorPos(ImVec2(block_x, btn_y));
-    if (ImGui::Button("<", ImVec2(btn_size, btn_size))) step = -1;
-
-    // value text — centred horizontally in its column, at standard font size
-    float value_x = block_x + btn_size + gap;
+    ImGui::SetCursorPos(ImVec2(block_x, box.row_y));
+    if (ImGui::Button("<", ImVec2(box.row_h, box.row_h))) step = -1;
+    float value_x = block_x + box.row_h + style.ItemSpacing.x;
     float pad = (box.value_w - ImGui::CalcTextSize(value).x) * 0.5f;
-    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), value_text_y));
+    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
+    ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(value);
-
-    // ">" — increment / toggle
-    float btn2_x = value_x + box.value_w + gap;
-    ImGui::SetCursorPos(ImVec2(btn2_x, btn_y));
-    if (ImGui::Button(">", ImVec2(btn_size, btn_size))) step = 1;
-
+    ImGui::SetCursorPos(ImVec2(value_x + box.value_w + style.ItemSpacing.x, box.row_y));
+    if (ImGui::Button(">", ImVec2(box.row_h, box.row_h))) step = 1;
     ImGui::PopItemFlag();
     ImGui::PopID();
     EndRow(box);
@@ -401,7 +332,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
              kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
-             kCheatPanelSize, kCheatButtonSize, kCheatButtonGap, kCheatLabelSize, kCheatHeadingSize, kCheatReset };
+             kCheatPanelSize, kCheatReset };
 
 using rows::Kind;
 using rows::Row;
@@ -468,9 +399,9 @@ constexpr Row kGeneralRows[] = {
 // The cheats page. The ESP rows have their own ESP heading (below PLAYER, above CROSSHAIR) so the
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
-// Every heading is collapsible — click it to toggle. The CHEAT UI section at the bottom customises the
-// overall panel size and the panel's text/button sizes, and offers a RESET CHEAT UI row that returns all
-// five to their defaults (100%) in one press without touching any other cheat toggle.
+// Every heading is collapsible — click it to toggle. The CHEAT UI section at the bottom offers overall
+// panel size and a one-press reset back to default (100%). No per-element sizing — those follow em /
+// base_h and scale with panel size automatically.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -511,10 +442,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
     {Kind::Heading, -1, "CHEAT UI"},
     {Kind::Value, kCheatPanelSize, "CHEAT PANEL SIZE"},
-    {Kind::Value, kCheatButtonSize, "CHEAT BUTTON SIZE"},
-    {Kind::Value, kCheatButtonGap, "CHEAT BUTTON GAP"},
-    {Kind::Value, kCheatLabelSize, "CHEAT LABEL SIZE"},
-    {Kind::Value, kCheatHeadingSize, "CHEAT HEADING SIZE"},
     {Kind::Value, kCheatReset, "RESET CHEAT UI"},
 };
 
@@ -793,33 +720,9 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), o.cheat_panel_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
                           o.cheat_panel_size);
             return true;
-        case kCheatButtonSize:
-            if (step) o.cheat_button_size = uint32_t(StepRange(int(o.cheat_button_size), 50, 1000, 5, step));
-            std::snprintf(text, sizeof(text), o.cheat_button_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
-                          o.cheat_button_size);
-            return true;
-        case kCheatButtonGap:
-            if (step) o.cheat_button_gap = uint32_t(StepRange(int(o.cheat_button_gap), 0, 1000, 5, step));
-            std::snprintf(text, sizeof(text), o.cheat_button_gap == 100 ? "%u%% (DEFAULT)" : "%u%%",
-                          o.cheat_button_gap);
-            return true;
-        case kCheatLabelSize:
-            if (step) o.cheat_label_size = uint32_t(StepRange(int(o.cheat_label_size), 50, 1000, 5, step));
-            std::snprintf(text, sizeof(text), o.cheat_label_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
-                          o.cheat_label_size);
-            return true;
-        case kCheatHeadingSize:
-            if (step) o.cheat_heading_size = uint32_t(StepRange(int(o.cheat_heading_size), 50, 1000, 5, step));
-            std::snprintf(text, sizeof(text), o.cheat_heading_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
-                          o.cheat_heading_size);
-            return true;
         case kCheatReset:
             if (step) {
                 o.cheat_panel_size = 100;
-                o.cheat_button_size = 100;
-                o.cheat_button_gap = 100;
-                o.cheat_label_size = 100;
-                o.cheat_heading_size = 100;
             }
             std::snprintf(text, sizeof(text), "TAP < OR > TO RESET");
             return true;
@@ -994,10 +897,6 @@ void RestoreDefaults(int page) {
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
         o.cheat_panel_size = none.cheat_panel_size;
-        o.cheat_button_size = none.cheat_button_size;
-        o.cheat_button_gap = none.cheat_button_gap;
-        o.cheat_label_size = none.cheat_label_size;
-        o.cheat_heading_size = none.cheat_heading_size;
         Changed();
         return;
     }
@@ -1049,10 +948,6 @@ void RestoreDefaults(int page) {
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
     o.cheat_panel_size = keep.cheat_panel_size;
-    o.cheat_button_size = keep.cheat_button_size;
-    o.cheat_button_gap = keep.cheat_button_gap;
-    o.cheat_label_size = keep.cheat_label_size;
-    o.cheat_heading_size = keep.cheat_heading_size;
     Changed();
 }
 
