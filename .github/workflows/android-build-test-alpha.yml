@@ -153,7 +153,7 @@ jobs:
           KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
           KS_PASSWORD="$KEYSTORE_PASSWORD"
           KPASSWORD="$KEY_PASSWORD"
-          ALIAS="${KEY_ALIAS:-black-ci}"
+          ALIAS="${KEY_ALIAS:-black-android}"
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Using release keystore from secrets..."
             echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
@@ -163,8 +163,8 @@ jobs:
               exit 1
             fi
             echo "WARNING: No release keystore secret set - generating a temporary CI keystore." >&2
-            [ -z "$KS_PASSWORD" ] && KS_PASSWORD="black-ci-temp"
-            [ -z "$KPASSWORD" ]   && KPASSWORD="black-ci-temp"
+            [ -z "$KS_PASSWORD" ] && KS_PASSWORD="black-android-temp"
+            [ -z "$KPASSWORD" ]   && KPASSWORD="black-android-temp"
             keytool -genkeypair -v \
               -keystore "$KEYSTORE_PATH" \
               -storetype PKCS12 \
@@ -174,7 +174,7 @@ jobs:
               -validity 10000 \
               -storepass "$KS_PASSWORD" \
               -keypass "$KPASSWORD" \
-              -dname "CN=BLACK CI, OU=CI, O=CI, L=CI, S=CI, C=US" \
+              -dname "CN=BLACK Android, OU=Android, O=Android, L=Mountain View, S=California, C=US" \
               2>/dev/null
           fi
           {
