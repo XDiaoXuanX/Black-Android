@@ -194,14 +194,21 @@ std::map<std::string, bool> g_collapsed;
 // if collapsed (the caller skips them until the next heading). The whole heading is one full-width clickable
 // strip: hovering highlights it, clicking toggles collapse. A ▶ / ▼ triangle on the left shows the state.
 //
-// The heading text size follows game::Opt().cheat_heading_size (50%..1000%). The whole heading layout — the
-// triangle, the left offset of the text, the row height — scales proportionally, so a 150% heading grows the
-// section title without overlapping the row below or the ▶/▼ triangle. Text is rendered via the low-level
-// AddText overload that takes a font and size, so it can be scaled independently of ImGui's frame text.
+// Sizing chain (all three multiply together):
+//   1. em (ImGui::GetFontSize) — already scaled by io.FontGlobalScale, which is set to
+//      InterfaceScale() = base * cheat_panel_size/100. So em scales with panel_size.
+//   2. cheat_heading_size/100 — the user's per-heading setting (50..1000%).
+//   3. panel_scale — extra panel_size multiplier so headings grow FASTER than the window at high
+//      panel sizes: at 200% panel + 100% heading the heading is 4x the base size (2x from em, 2x from
+//      the extra multiplier), while the window is only 2x — so the heading looks visibly bigger
+//      relative to the panel too, not just proportionally the same.
+// Capped at 6x em to prevent overflow at extreme combinations (heading_size=1000% + panel_size=300%).
 bool Section(const char* title) {
     float em = ImGui::GetFontSize();
-    float heading_scale = float(std::clamp(game::Opt().cheat_heading_size, 50u, 1000u)) / 100.0f;
-    float heading_font_size = em * heading_scale;
+    const game::Options& opts = game::Opt();
+    float panel_scale = float(std::clamp(opts.cheat_panel_size, 50u, 300u)) / 100.0f;
+    float heading_scale = float(std::clamp(opts.cheat_heading_size, 50u, 1000u)) / 100.0f;
+    float heading_font_size = std::min(em * heading_scale * panel_scale, em * 6.0f);
     ImGui::Dummy(ImVec2(0, em * 0.3f));
     std::string key(title);
     bool& collapsed = g_collapsed[key];
@@ -287,32 +294,46 @@ void FillItem() {
 // Each option row: label on the left, "<" button, value text, ">" button on the right. Both buttons toggle
 // a boolean row (INFINITE AMMO, GOD MODE, …) — a boolean row ignores the step sign (Flip flips on any
 // nonzero step) — and step a multi-value row (RAPID FIRE, GAME SPEED, ESP COLOR, AIMBOT TARGET, …) by -1
-// / +1. Size and gap of the buttons, and the size of the label text, come from game::Opt():
-//   cheat_button_size  50..1000 (% of the standard frame height) — button side in pixels
-//   cheat_button_gap    0..1000 (% of the standard ItemSpacing) — distance between button and value text
-//   cheat_label_size   50..1000 (% of the standard font size)   — label text height
-// The row's height grows to fit the largest of (standard frame height, button size, label size), so a 150%
-// label does not spill into the next row. Label and value text are vertically centred in the row; the two
-// buttons are also centred so the three elements (label, value, buttons) stay on the same visual band
-// whatever combination of sizes the user picked.
+// / +1.
+//
+// Sizing chain (all three multiply together):
+//   1. em / base_h — already scaled by io.FontGlobalScale = base * cheat_panel_size/100. So the base
+//      sizes scale with panel_size.
+//   2. cheat_{button,label,gap}_size/100 — the user's per-element settings.
+//   3. panel_scale — extra panel_size multiplier so buttons/labels/gaps grow FASTER than the window at
+//      high panel sizes: at 200% panel + 100% button the button is 4x the base size (2x from em via
+//      base_h, 2x from the extra multiplier), while the window is only 2x — so the button looks visibly
+//      bigger relative to the panel too, not just proportionally the same.
+// Safety caps prevent overflow at extreme combinations (1000% element + 300% panel):
+//   - btn_size    capped at row_w / 4   (two buttons = at most half the row)
+//   - label_size  capped at em * 6      (label doesn't grow unboundedly past 6x base)
+//   - gap         no cap (gaps don't overflow the row height)
 int OptionRow(const char* label, const char* value) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const game::Options& opts = game::Opt();
     float em = ImGui::GetFontSize();
     float base_h = ImGui::GetFrameHeight();
 
+    float panel_scale = float(std::clamp(opts.cheat_panel_size, 50u, 300u)) / 100.0f;
     float size_pct = float(std::clamp(opts.cheat_button_size, 50u, 1000u)) / 100.0f;
     float gap_pct = float(std::clamp(opts.cheat_button_gap, 0u, 1000u)) / 100.0f;
     float label_scale = float(std::clamp(opts.cheat_label_size, 50u, 1000u)) / 100.0f;
-    float btn_size = base_h * size_pct;
-    float gap = style.ItemSpacing.x * gap_pct;
-    float label_font_size = em * label_scale;
 
     RowBox box;
     box.em = em;
     box.row_w = ImGui::GetContentRegionAvail().x;
-    box.row_h = std::max({base_h, btn_size, label_font_size * 1.25f});
     box.value_w = em * kValueEms;
+
+    // btn_size gets the extra panel_scale multiplier and a safety cap at 1/4 of the row width so two
+    // buttons never eat more than half the row (label + value still fit).
+    float btn_size_raw = base_h * size_pct * panel_scale;
+    float btn_size = std::min(btn_size_raw, box.row_w * 0.25f);
+    // gap gets the extra multiplier but no cap.
+    float gap = style.ItemSpacing.x * gap_pct * panel_scale;
+    // label gets the extra multiplier, capped at 6x em so a 1000% setting doesn't overflow the row.
+    float label_font_size = std::min(em * label_scale * panel_scale, em * 6.0f);
+
+    box.row_h = std::max({base_h, btn_size, label_font_size * 1.25f});
     box.block_w = btn_size * 2 + box.value_w + gap * 2;
     box.row_x = ImGui::GetCursorPosX();
     box.row_y = ImGui::GetCursorPosY();
