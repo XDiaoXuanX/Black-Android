@@ -86,7 +86,20 @@ struct Options {
     // animation state and crash the game.
     bool rapid_fire_extra = false;
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
-    bool no_bullet_spread = false;  // cheat: the player's bullets fly straight from the muzzle, no random cone
+    // cheat: bullets fly straight from the muzzle (no spread cone) AND the weapon stays exactly on the aim
+    // line during fire. Two things are zeroed when this is on, in addition to the spread floats at
+    // weapon_data + 0x40 (weapons.cpp's ApplyNoBulletSpread):
+    //   1. The gun's sway shares (hooks.cpp's SwayBegin): the gun snaps to the aim position every frame, so
+    //      it does not trail the stick — no visual wobble while moving or firing. The gun is exactly on the
+    //      crosshair, so every bullet leaves straight toward the crosshair point.
+    //   2. The view recoil (hooks.cpp's RecoilDecay): the view does not kick up from shots, so the aim line
+    //      does not drift off the crosshair between shots (same effect as NO RECOIL, but tied to this option
+    //      so perfect accuracy also keeps the crosshair steady).
+    // The fire animation still plays (a small muzzle climb, visual only), but the bullet direction is the
+    // camera's, not the gun's, so all bullets hit the crosshair point. Most useful with a custom crosshair
+    // (crosshair_* above) for precise aim. Turning this off restores the game's sway and recoil on the next
+    // frame (SwayEnd restores the original shares; the recoil factor is computed normally again).
+    bool no_bullet_spread = false;
     uint32_t game_speed = 100;  // cheat: percent of the game's speed, menus and films keep theirs
     bool god_mode = false;  // cheat: no hit takes the player's health
     bool one_hit_kill = false;  // cheat: any hit of the player's bullets kills
