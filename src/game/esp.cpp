@@ -5,6 +5,10 @@
 // the health bar's fill uses its own green/yellow/red palette (green above 66% of the reference max, yellow
 // above 33%, red below). AIMBOT: the view turns to the point on the living enemy nearest the crosshair chosen
 // by aimbot_target (neck, body, legs or head), by aimbot_pull each frame, but never inside aimbot_deadzone.
+//
+// The CROSSHAIR (options.h) is drawn in the same 2D layer, in the centre of the viewport, with its own shape
+// (+ / * / X / DOT) and colour scheme (preset or custom RGB, like ESP). It is drawn first, before the ESP
+// guard, so it appears even when ESP is off.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -55,7 +59,7 @@ constexpr float kAimHeights[4] = {
 
 // the ESP line colours the preset row offers; panel cheats.cpp holds the same list with names (kEspPresets)
 // and must be kept in sync with these — a preset picked there writes its rgb into esp_red / esp_green /
-// esp_blue, and the CUSTOM entry reads them straight.
+// esp_blue, and the CUSTOM entry reads them straight. The CROSSHAIR uses the same list via crosshair_color.
 struct EspPreset {
     float r, g, b;
 };
@@ -112,6 +116,9 @@ struct Vertex {
 constexpr size_t kVertsPerEnemy = 24;
 constexpr size_t kMaxVertices = kMaxEnemies * kVertsPerEnemy;
 
+// Crosshair vertex budget: the * shape is 8 arms × 6 verts = 48, round up to 64.
+constexpr size_t kCrosshairMaxVerts = 64;
+
 void Remember(uint32_t who) {
     auto now = std::chrono::steady_clock::now();
     for (size_t i = 0; i < g_count; i++)
@@ -142,6 +149,22 @@ void CurrentColour(float out[4]) {
         out[0] = float(opts.esp_red) / 255.0f;
         out[1] = float(opts.esp_green) / 255.0f;
         out[2] = float(opts.esp_blue) / 255.0f;
+    }
+    out[3] = 1.0f;
+}
+
+// crosshair colour: same scheme, crosshair_color / crosshair_red / crosshair_green / crosshair_blue
+void CurrentCrosshairColour(float out[4]) {
+    const game::Options& opts = game::Opt();
+    uint32_t preset = opts.crosshair_color;
+    if (preset < kEspPresetCount) {
+        out[0] = kEspPresets[preset].r;
+        out[1] = kEspPresets[preset].g;
+        out[2] = kEspPresets[preset].b;
+    } else {
+        out[0] = float(opts.crosshair_red) / 255.0f;
+        out[1] = float(opts.crosshair_green) / 255.0f;
+        out[2] = float(opts.crosshair_blue) / 255.0f;
     }
     out[3] = 1.0f;
 }
@@ -178,6 +201,66 @@ void WriteSegment(Vertex*& v, uint8_t*& c, float x0, float y0, float x1, float y
         *v++ = {corners[i][0], corners[i][1]};
         std::memcpy(c, colour, 16);
         c += 16;
+    }
+}
+
+// ---- crosshair ---------------------------------------------------------------------------------------------
+// The crosshair is drawn in the centre of the viewport as untextured triangles, in the same batch as ESP.
+// Sizes and gaps are in pixels at 480p (`unit` brings them to the render resolution), so the crosshair scales
+// with the picture instead of pixelating.
+//
+// Each arm is one WriteSegment: a rectangle from `gap` to `gap + size` along its direction. Directions are
+// unit vectors; diagonals use 0.707 = cos(45°). The dot uses one square in the middle.
+constexpr float kDiag = 0.70710678f;
+
+// one arm of the crosshair: from (cx + dx*gap, cy + dy*gap) to (cx + dx*(gap+size), cy + dy*(gap+size))
+void DrawArm(Vertex*& v, uint8_t*& c, float cx, float cy, float dx, float dy, float gap, float size, float thick,
+             const float colour[4]) {
+    float x0 = cx + dx * gap;
+    float y0 = cy + dy * gap;
+    float x1 = cx + dx * (gap + size);
+    float y1 = cy + dy * (gap + size);
+    WriteSegment(v, c, x0, y0, x1, y1, thick, colour);
+}
+
+void DrawCrosshairSegments(Vertex*& v, uint8_t*& c, float cx, float cy, float unit) {
+    const game::Options& opts = game::Opt();
+    float size = float(opts.crosshair_size) * unit;
+    float thick = float(opts.crosshair_thickness) * unit;
+    float gap = float(opts.crosshair_gap) * unit;
+    float colour[4];
+    CurrentCrosshairColour(colour);
+
+    switch (opts.crosshair_style) {
+        case 0:  // + (cross): 4 axis arms
+            DrawArm(v, c, cx, cy, 1, 0, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, -1, 0, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, 0, -1, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, 0, 1, gap, size, thick, colour);
+            break;
+        case 1:  // * (star): 4 axis arms + 4 diagonal arms
+            DrawArm(v, c, cx, cy, 1, 0, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, -1, 0, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, 0, -1, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, 0, 1, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, kDiag, -kDiag, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, -kDiag, kDiag, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, kDiag, kDiag, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, -kDiag, -kDiag, gap, size, thick, colour);
+            break;
+        case 2:  // X: 4 diagonal arms
+            DrawArm(v, c, cx, cy, kDiag, -kDiag, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, -kDiag, kDiag, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, kDiag, kDiag, gap, size, thick, colour);
+            DrawArm(v, c, cx, cy, -kDiag, -kDiag, gap, size, thick, colour);
+            break;
+        case 3: {  // DOT: one small filled square
+            float s = std::max(thick * 0.5f, 1.0f * unit);
+            WriteSegment(v, c, cx, cy - s, cx, cy + s, s * 2, colour);
+            break;
+        }
+        default:
+            break;
     }
 }
 
@@ -222,8 +305,38 @@ void Aimbot(X86Context& ctx) {
 
 // D3DVIEWPORT8: x, y, width, height. Called between the 2D layer's begin and end. Bit flags in esp_display:
 // bit 0 = line, bit 1 = health bar. Draw order: line first, then the health bar above the head.
+// The crosshair (options.h) is drawn FIRST, before the ESP guard: it appears even when ESP is off, and its
+// colour scheme (crosshair_color / crosshair_red / crosshair_green / crosshair_blue) is independent of ESP's.
+void DrawCrosshair(X86Context& ctx, float unit) {
+    const game::Options& opts = Opt();
+    if (!opts.crosshair || !R32(kWorld)) return;
+    uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
+    float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
+    float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
+    float cx = vx + vw * 0.5f;
+    float cy = vy + vh * 0.5f;
+    static const uint32_t buffer = mem::AllocSystem(kCrosshairMaxVerts * sizeof(Vertex), 16);
+    static const uint32_t offset = mem::AllocSystem(8, 16);
+    static const uint32_t colours = mem::AllocSystem(kCrosshairMaxVerts * sizeof(float) * 4, 16);
+    Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
+    Vertex* v = first;
+    uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
+    DrawCrosshairSegments(v, c, cx, cy, unit);
+    if (v == first) return;
+    W32(offset, 0);
+    W32(offset + 4, 0);
+    uint32_t eax = ctx.eax, ecx = ctx.ecx;
+    ctx.eax = uint32_t(v - first) / 3;
+    ctx.ecx = buffer;
+    CallGuest(ctx, kTriangles, {offset, colours});
+    ctx.eax = eax;
+    ctx.ecx = ecx;
+}
+
 void DrawEsp(X86Context& ctx, float unit) {
     const game::Options& opts = Opt();
+    // crosshair draws first, before the ESP guard: independent of the ESP master toggle
+    if (opts.crosshair) DrawCrosshair(ctx, unit);
     if (!opts.esp || !g_camera || !R32(kWorld)) return;
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
