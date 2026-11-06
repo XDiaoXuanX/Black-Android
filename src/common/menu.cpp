@@ -380,7 +380,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
              kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
-             kCheatButtonSize, kCheatButtonGap, kCheatLabelSize, kCheatHeadingSize, kCheatReset };
+             kCheatPanelSize, kCheatButtonSize, kCheatButtonGap, kCheatLabelSize, kCheatHeadingSize, kCheatReset };
 
 using rows::Kind;
 using rows::Row;
@@ -448,8 +448,8 @@ constexpr Row kGeneralRows[] = {
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
 // Every heading is collapsible — click it to toggle. The CHEAT UI section at the bottom customises the
-// "<" / ">" buttons and the panel's text sizes, and offers a RESET CHEAT UI row that returns all four to
-// their defaults (100%) in one press without touching any other cheat toggle.
+// overall panel size and the panel's text/button sizes, and offers a RESET CHEAT UI row that returns all
+// five to their defaults (100%) in one press without touching any other cheat toggle.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -489,6 +489,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
     {Kind::Heading, -1, "CHEAT UI"},
+    {Kind::Value, kCheatPanelSize, "CHEAT PANEL SIZE"},
     {Kind::Value, kCheatButtonSize, "CHEAT BUTTON SIZE"},
     {Kind::Value, kCheatButtonGap, "CHEAT BUTTON GAP"},
     {Kind::Value, kCheatLabelSize, "CHEAT LABEL SIZE"},
@@ -766,6 +767,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
             return true;
+        case kCheatPanelSize:
+            if (step) o.cheat_panel_size = uint32_t(StepRange(int(o.cheat_panel_size), 50, 300, 5, step));
+            std::snprintf(text, sizeof(text), o.cheat_panel_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
+                          o.cheat_panel_size);
+            return true;
         case kCheatButtonSize:
             if (step) o.cheat_button_size = uint32_t(StepRange(int(o.cheat_button_size), 50, 1000, 5, step));
             std::snprintf(text, sizeof(text), o.cheat_button_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
@@ -788,6 +794,7 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             return true;
         case kCheatReset:
             if (step) {
+                o.cheat_panel_size = 100;
                 o.cheat_button_size = 100;
                 o.cheat_button_gap = 100;
                 o.cheat_label_size = 100;
@@ -965,6 +972,7 @@ void RestoreDefaults(int page) {
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
+        o.cheat_panel_size = none.cheat_panel_size;
         o.cheat_button_size = none.cheat_button_size;
         o.cheat_button_gap = none.cheat_button_gap;
         o.cheat_label_size = none.cheat_label_size;
@@ -1019,6 +1027,7 @@ void RestoreDefaults(int page) {
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
+    o.cheat_panel_size = keep.cheat_panel_size;
     o.cheat_button_size = keep.cheat_button_size;
     o.cheat_button_gap = keep.cheat_button_gap;
     o.cheat_label_size = keep.cheat_label_size;
@@ -1339,7 +1348,12 @@ float InterfaceScale(ImGuiIO& io) {
     float fit_x = io.DisplaySize.x / (kPanelWideEms * font_base * kPanelMargin);
     float fit_y = io.DisplaySize.y / (kPanelTallEms * font_base * kPanelMargin);
     float density = std::min(io.DisplaySize.x, io.DisplaySize.y) / 720.0f;
-    return std::clamp(std::min({density, fit_x, fit_y}), 0.7f, 2.5f);
+    float base = std::min({density, fit_x, fit_y});
+    // The master panel size: multiplies the whole font scale so the panel window and everything inside it
+    // grows or shrinks together. The floor keeps text readable at 50% on tiny screens, and the ceiling
+    // keeps 300% on huge displays from producing absurdly large text that overflows every buffer.
+    float user = float(std::clamp(game::Opt().cheat_panel_size, 50u, 300u)) / 100.0f;
+    return std::clamp(base * user, 0.5f, 4.0f);
 }
 
 }  // namespace
