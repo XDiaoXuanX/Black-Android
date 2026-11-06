@@ -144,6 +144,9 @@ constexpr EspPreset kEspPresets[] = {
 };
 constexpr size_t kEspPresetCount = sizeof(kEspPresets) / sizeof(kEspPresets[0]);
 
+// crosshair shapes; keep in sync with options.h's comment (crosshair_style 0..3)
+const char* const kCrosshairStyleNames[] = {"+ (CROSS)", "* (STAR)", "X (DIAGONAL)", "DOT"};
+
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -275,7 +278,9 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
              kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor,
-             kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
+             kEspRed, kEspGreen, kEspBlue, kCrosshair, kCrosshairStyle, kCrosshairSize, kCrosshairThickness,
+             kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
+             kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
@@ -358,6 +363,17 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kEspRed, "ESP RED"},
     {Kind::Value, kEspGreen, "ESP GREEN"},
     {Kind::Value, kEspBlue, "ESP BLUE"},
+    {Kind::Heading, -1, "CROSSHAIR"},
+    {Kind::Value, kCrosshair, "CROSSHAIR"},
+    {Kind::Value, kCrosshairStyle, "CROSSHAIR STYLE"},
+    {Kind::Value, kCrosshairSize, "CROSSHAIR SIZE"},
+    {Kind::Value, kCrosshairThickness, "CROSSHAIR THICKNESS"},
+    {Kind::Value, kCrosshairGap, "CROSSHAIR GAP"},
+    {Kind::Value, kCrosshairColor, "CROSSHAIR COLOR"},
+    {Kind::Value, kCrosshairRed, "CROSSHAIR RED"},
+    {Kind::Value, kCrosshairGreen, "CROSSHAIR GREEN"},
+    {Kind::Value, kCrosshairBlue, "CROSSHAIR BLUE"},
+    {Kind::Heading, -1, "AIM ASSIST"},
     {Kind::Value, kAimbot, "AIMBOT (WHILE AIMING IN)"},
     {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},
     {Kind::Value, kAimbotPull, "AIMBOT PULL"},
@@ -443,6 +459,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
         case kEsp: return &o.esp;
+        case kCrosshair: return &o.crosshair;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kAimbot: return &o.aimbot;
@@ -572,6 +589,51 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) {
                 channel = uint32_t(StepRange(int(channel), 0, 255, 1, step));
                 o.esp_color = uint32_t(kEspPresetCount);
+            }
+            std::snprintf(text, sizeof(text), "%u", channel);
+            return true;
+        }
+        case kCrosshairStyle:
+            if (step) o.crosshair_style = uint32_t(StepRange(int(o.crosshair_style), 0, 3, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kCrosshairStyleNames[std::clamp(o.crosshair_style, 0u, 3u)]);
+            return true;
+        case kCrosshairSize:
+            if (step) o.crosshair_size = uint32_t(StepRange(int(o.crosshair_size), 2, 32, 1, step));
+            std::snprintf(text, sizeof(text), "%u", o.crosshair_size);
+            return true;
+        case kCrosshairThickness:
+            if (step) o.crosshair_thickness = uint32_t(StepRange(int(o.crosshair_thickness), 1, 8, 1, step));
+            std::snprintf(text, sizeof(text), "%u", o.crosshair_thickness);
+            return true;
+        case kCrosshairGap:
+            if (step) o.crosshair_gap = uint32_t(StepRange(int(o.crosshair_gap), 0, 20, 1, step));
+            std::snprintf(text, sizeof(text), "%u", o.crosshair_gap);
+            return true;
+        case kCrosshairColor: {
+            uint32_t preset = std::clamp(o.crosshair_color, 0u, uint32_t(kEspPresetCount));
+            if (step) {
+                preset = uint32_t(StepIndex(int(preset), step, int(kEspPresetCount) + 1));
+                o.crosshair_color = preset;
+                if (preset < kEspPresetCount) {
+                    const EspPreset& p = kEspPresets[preset];
+                    o.crosshair_red = uint32_t(p.r * 255.0f + 0.5f);
+                    o.crosshair_green = uint32_t(p.g * 255.0f + 0.5f);
+                    o.crosshair_blue = uint32_t(p.b * 255.0f + 0.5f);
+                }
+            }
+            std::snprintf(text, sizeof(text), "%s",
+                          preset < kEspPresetCount ? kEspPresets[preset].name : "CUSTOM");
+            return true;
+        }
+        case kCrosshairRed:
+        case kCrosshairGreen:
+        case kCrosshairBlue: {
+            uint32_t& channel = id == kCrosshairRed ? o.crosshair_red
+                              : id == kCrosshairGreen ? o.crosshair_green
+                              : o.crosshair_blue;
+            if (step) {
+                channel = uint32_t(StepRange(int(channel), 0, 255, 1, step));
+                o.crosshair_color = uint32_t(kEspPresetCount);
             }
             std::snprintf(text, sizeof(text), "%u", channel);
             return true;
@@ -749,6 +811,15 @@ void RestoreDefaults(int page) {
         o.esp_red = none.esp_red;
         o.esp_green = none.esp_green;
         o.esp_blue = none.esp_blue;
+        o.crosshair = none.crosshair;
+        o.crosshair_style = none.crosshair_style;
+        o.crosshair_size = none.crosshair_size;
+        o.crosshair_thickness = none.crosshair_thickness;
+        o.crosshair_gap = none.crosshair_gap;
+        o.crosshair_color = none.crosshair_color;
+        o.crosshair_red = none.crosshair_red;
+        o.crosshair_green = none.crosshair_green;
+        o.crosshair_blue = none.crosshair_blue;
         o.aimbot = none.aimbot;
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
@@ -790,6 +861,15 @@ void RestoreDefaults(int page) {
     o.esp_red = keep.esp_red;
     o.esp_green = keep.esp_green;
     o.esp_blue = keep.esp_blue;
+    o.crosshair = keep.crosshair;
+    o.crosshair_style = keep.crosshair_style;
+    o.crosshair_size = keep.crosshair_size;
+    o.crosshair_thickness = keep.crosshair_thickness;
+    o.crosshair_gap = keep.crosshair_gap;
+    o.crosshair_color = keep.crosshair_color;
+    o.crosshair_red = keep.crosshair_red;
+    o.crosshair_green = keep.crosshair_green;
+    o.crosshair_blue = keep.crosshair_blue;
     o.aimbot = keep.aimbot;
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
