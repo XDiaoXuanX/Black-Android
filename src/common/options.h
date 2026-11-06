@@ -157,6 +157,22 @@ struct Options {
     // cheat: tenths of a degree inside which the aimbot does not turn. Larger leaves the crosshair freer so it
     // can be slid off one enemy onto the next; smaller keeps it locked on the current one. 15 = 1.5 degrees.
     uint32_t aimbot_deadzone = 15;
+    // cheat panel UI: size and gap of the "<" / ">" buttons on every cheat option row (the buttons that
+    // toggle a boolean ON/OFF — e.g. INFINITE AMMO, INFINITE GRENADES, GOD MODE, ONE-HIT KILL — and step
+    // multi-value rows like RAPID FIRE, GAME SPEED, ESP COLOR, AIMBOT TARGET). Both values are percentages
+    // of a standard UI measure:
+    //
+    //   cheat_button_size  50..200 (100 = the standard frame height; >100 makes the buttons larger and
+    //                              easier to tap on a phone; <100 makes them smaller for a denser layout).
+    //                              The row's height grows to fit the larger of (standard height, button
+    //                              size), so a 150% button does not spill into the next row.
+    //   cheat_button_gap    0..300 (100 = the standard ItemSpacing between controls; 0 puts the value text
+    //                              right up against the buttons; 300 leaves three times the standard gap).
+    //
+    // Both are edited in the CHEATS page's CHEAT UI section, applied live (no restart), and persisted to
+    // settings like every other option. Defaults (100/100) reproduce the previous layout exactly.
+    uint32_t cheat_button_size = 100;
+    uint32_t cheat_button_gap = 100;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
