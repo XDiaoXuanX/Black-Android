@@ -318,23 +318,32 @@ X86_FUNC(sub_001D2860) {
 }
 
 // Recoil dies away by a factor a frame. ebx the player: the kick a shot leaves (0x1EFE58) is spent here before
-// it reaches the view, the cheat makes it nothing
+// it reaches the view, the cheat makes it nothing. NO BULLET SPREAD also zeroes it, because for perfect
+// accuracy the aim line must not drift off the crosshair between shots — the view kick would move the crosshair
+// off the target even with the spread cone zeroed, making the bullets miss the point the user is aiming at.
 void RecoilDecay(X86Context& ctx, uint8_t*) {
-    bool none = game::Opt().no_recoil && ctx.ebx == Player();
+    bool none = (game::Opt().no_recoil || game::Opt().no_bullet_spread) && ctx.ebx == Player();
     ctx.xmm[0].f[0] = none ? 0.0f : std::pow(ctx.xmm[0].f[0], FrameShare());
 }
 
 constexpr uint32_t kDataSwayShares = 0x104;
 
-// The gun trails the stick by two shares a frame, read from the weapon's data: scaled for the four blends
+// The gun trails the stick by two shares a frame, read from the weapon's data: scaled for the four blends.
+// NO BULLET SPREAD freezes the sway: the shares are set to 1 (the gun snaps to its target position every
+// frame — no trailing, no wobble while moving or firing), so the gun picture stays exactly on the aim line
+// and every bullet leaves the muzzle straight toward the crosshair. The original values are restored in
+// SwayEnd when the option is off, so the game's own sway comes back.
 static uint32_t g_sway;
 static float g_sway_share[2];
 void SwayBegin(X86Context& ctx, uint8_t*) {
     g_sway = ctx.eax + kDataSwayShares;
+    bool freeze = game::Opt().no_bullet_spread;
     for (int i = 0; i < 2; i++) {
         float& k = G<float>(g_sway + i * 4);
         g_sway_share[i] = k;
-        k = 1 - std::pow(1 - k, FrameShare());
+        // k is the fraction of the remaining distance the gun covers per frame (1 = instant follow, 0 = never
+        // follow). Freeze the sway by forcing instant follow: the gun sits exactly on its target every frame.
+        k = freeze ? 1.0f : 1 - std::pow(1 - k, FrameShare());
     }
 }
 void SwayEnd(X86Context&, uint8_t*) {
