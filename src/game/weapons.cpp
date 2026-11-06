@@ -78,6 +78,12 @@ constexpr int kMedkitMax = 3;
 // class ever has a hardcoded in-game cap, set kGrenadeMax back to 4 to match the HUD.
 constexpr uint32_t kCharGrenades = 0x286;  // uint16
 constexpr int kGrenadeMax = 999;
+// Ammo max for FILL AMMUNITION. kAmmoMax is the reserve ceiling set by DoFill for EVERY ammo type (all ten
+// inventory slots), so every weapon in the game — pistols, SMGs, rifles, shotguns, snipers, LMGs, launchers —
+// shows 999 in its reserve whether it's in a slot, about to be picked up, or already held. The magazine clip
+// (the count shown in the current gun) is NOT touched: the game's own reload pulls from the full reserve when
+// the player fires or reloads. That matches the historical FILL AMMUNITION behavior (reserve only) applied to
+// every ammo type, not just the two slot weapons.
 constexpr uint32_t kAmmoMax = 999;
 // weapon and its data
 constexpr uint32_t kWeaponType = 0;  // byte: index in the table
@@ -552,6 +558,34 @@ void DoFillGrenades() {
     SetStatus("Grenades filled (" + std::to_string(kGrenadeMax) + "/" + std::to_string(kGrenadeMax) + ")");
 }
 
+// FILL AMMUNITION — all weapons, reserve max 999. The inventory holds the reserve count for each ammo type
+// as a uint16 at l.inventory + 0, +2, ..., +(kAmmoTypes-1)*2. Setting every one of them to kAmmoMax covers the
+// whole weapon roster of the game at once: pistols, SMGs, rifles, shotguns, snipers, LMGs, launchers all read
+// from their type's inventory reserve, so filling all types means every weapon — in a slot, about to be
+// picked up, or already carried — will see 999 reserve ammo. The magazine clip (the count shown in the
+// current gun) is untouched; the game's own reload pulls from the (now full) reserve when the player fires or
+// reloads, which is the same behavior as before for the two slot weapons, now extended to every type.
+//
+// Behaviour mirrors DoFillGrenades: an "already full" check comes first so a second press reports it instead
+// of silently doing nothing, and the success / already-full status lines follow the same "X filled (N/N)" and
+// "X already full (N)" format, so the two features read the same in the panel's status bar.
+void DoFill() {
+    Level l;
+    if (!ReadLevel(l)) return SetStatus("Only during a level");
+    bool full = true;
+    for (int i = 0; i < kAmmoTypes; i++) {
+        if (G<uint16_t>(l.inventory + uint32_t(i) * 2) < kAmmoMax) { full = false; break; }
+    }
+    if (full) return SetStatus("Ammunition already full (" + std::to_string(kAmmoMax) + ")");
+    for (int i = 0; i < kAmmoTypes; i++) {
+        uint16_t& ammo = G<uint16_t>(l.inventory + uint32_t(i) * 2);
+        ammo = uint16_t(kAmmoMax);
+    }
+    for (int i = 0; i < 2; i++)
+        if (uint32_t w = Slot(l, i)) FillWeapon(l, w, true);
+    SetStatus("Ammunition filled (" + std::to_string(kAmmoMax) + "/" + std::to_string(kAmmoMax) + ")");
+}
+
 void DoGive(X86Context& ctx, int code) {
     Level l;
     if (!ReadLevel(l)) return SetStatus("Only during a level");
@@ -605,14 +639,6 @@ void DoGive(X86Context& ctx, int code) {
     bool model = EnsureWorldModel(ctx, name, G<uint8_t>(l.world + kWorldSilver) != 0);
     SetStatus(Label(name) + (suppressed ? " + Suppressor" : "") + (model ? " given" : " given (dropped, it will vanish)"));
     Refresh();
-}
-
-void DoFill() {
-    Level l;
-    if (!ReadLevel(l)) return SetStatus("Only during a level");
-    for (int i = 0; i < 2; i++)
-        if (uint32_t w = Slot(l, i)) FillWeapon(l, w, true);
-        SetStatus("Ammunition full");
 }
 
 // the weapon in hand, once it is idle: its suppressor goes on, if its type is on the list and it is not on already
