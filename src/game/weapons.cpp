@@ -72,11 +72,12 @@ constexpr int kAmmoTypes = 10;
 constexpr uint32_t kPlayerMedkits = 0x8E1;  // byte in the player: the medkits held (found by the pickup tracker), the game holds 3
 constexpr int kMedkitMax = 3;
 // grenades: the same field cheats.cpp uses for the infinite-grenades cheat (kCharGrenades = 0x286, uint16 on the
-// character). The standard grenade loadout in most classes is 4; setting the count to that fills the HUD's grenade
-// icons. The game's natural max is 4 for most classes, so 4 is a safe target (setting higher than the HUD shows
-// leaves the extra invisible but usable).
+// character). kGrenadeMax is 999, matching kAmmoMax below: fills the field to the same ceiling used for reserve
+// ammunition. The HUD only draws up to 4 grenade icons, so a count above 4 leaves the extra invisible but usable
+// (throws continue to spend from the full count, exactly like a pickup from an enemy that stacks past 4). If a
+// class ever has a hardcoded in-game cap, set kGrenadeMax back to 4 to match the HUD.
 constexpr uint32_t kCharGrenades = 0x286;  // uint16
-constexpr int kGrenadeMax = 4;
+constexpr int kGrenadeMax = 999;
 constexpr uint32_t kAmmoMax = 999;
 // weapon and its data
 constexpr uint32_t kWeaponType = 0;  // byte: index in the table
@@ -539,9 +540,9 @@ void DoFillMedkits() {
     SetStatus("Medkits filled (" + std::to_string(kMedkitMax) + "/" + std::to_string(kMedkitMax) + ")");
 }
 
-// Fill grenades to the standard loadout. Same pattern as DoFillMedkits: only touched when the count is below the
-// max, so a higher count (from pickups) is never reduced. The grenade field is the character's uint16 at +0x286 —
-// the same one the infinite-grenades cheat reads in cheats.cpp — so the fill and the cheat stay in sync.
+// Fill grenades to kGrenadeMax. Same pattern as DoFillMedkits: only touched when the count is below the max, so
+// a higher count (from pickups) is never reduced. The grenade field is the character's uint16 at +0x286 — the
+// same one the infinite-grenades cheat reads in cheats.cpp — so the fill and the cheat stay in sync.
 void DoFillGrenades() {
     Level l;
     if (!ReadLevel(l)) return SetStatus("Only during a level");
