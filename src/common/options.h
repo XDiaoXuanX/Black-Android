@@ -122,11 +122,6 @@ struct Options {
     // cheat: tenths of a degree inside which the aimbot does not turn. Larger leaves the crosshair freer so it
     // can be slid off one enemy onto the next; smaller keeps it locked on the current one. 15 = 1.5 degrees.
     uint32_t aimbot_deadzone = 15;
-    // cheat: which slot SAVE STATE / LOAD STATE act on (0..4). Also the slot F5 saves to and F9 loads.
-    // Files live under saves/stateN.bin next to the executable; each is up to ~500 MB on a full RAM,
-    // typically 100-300 MB after the zero-chunk compression. Files survive across runs; delete from the
-    // file system or use the DELETE action in the panel.
-    uint32_t save_slot = 0;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
