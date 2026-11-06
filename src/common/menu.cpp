@@ -275,9 +275,39 @@ void FillItem() {
                                               ImGui::GetColorU32(ImGuiCol_Header));
 }
 
+// Each option row: label on the left, "<" button, value text, ">" button on the right. The "<" / ">"
+// buttons toggle a boolean row (INFINITE AMMO, GOD MODE, ONE-HIT KILL, …) — a boolean row ignores the
+// step sign (Flip flips on any nonzero step) — and step a multi-value row (RAPID FIRE, GAME SPEED, ESP
+// COLOR, AIMBOT TARGET, …) by -1 / +1. Size and gap of the buttons come from
+// game::Opt().cheat_button_size / cheat_button_gap, edited in the CHEATS page's CHEAT UI section:
+//    size 50..200 (% of the standard frame height) — button side in pixels
+//    gap  0..300 (% of the standard ItemSpacing) — distance between button and value text
+// The row's height grows to fit the larger of (standard frame height, button size), so a 150% button
+// does not spill into the next row. Label and value text are vertically centred in the row so the three
+// elements (label, value, buttons) stay on the same baseline whatever the button size.
 int OptionRow(const char* label, const char* value) {
     const ImGuiStyle& style = ImGui::GetStyle();
-    RowBox box = MeasureRow();
+    const game::Options& opts = game::Opt();
+    float base_h = ImGui::GetFrameHeight();
+    float size_pct = float(std::clamp(opts.cheat_button_size, 50u, 200u)) / 100.0f;
+    float gap_pct = float(std::clamp(opts.cheat_button_gap, 0u, 300u)) / 100.0f;
+    float btn_size = base_h * size_pct;
+    float gap = style.ItemSpacing.x * gap_pct;
+
+    RowBox box;
+    box.em = ImGui::GetFontSize();
+    box.row_w = ImGui::GetContentRegionAvail().x;
+    box.row_h = std::max(base_h, btn_size);
+    box.value_w = box.em * kValueEms;
+    box.block_w = btn_size * 2 + box.value_w + gap * 2;
+    box.row_x = ImGui::GetCursorPosX();
+    box.row_y = ImGui::GetCursorPosY();
+
+    // Centre text and buttons vertically in the row. When the buttons are smaller than the row, they
+    // float in the middle; when larger, they define the row's height and the text follows them.
+    float text_y = box.row_y + (box.row_h - base_h) * 0.5f;
+    float btn_y = box.row_y + (box.row_h - btn_size) * 0.5f;
+
     ImGui::PushID(label);
     int step = 0;
     ImGui::Selectable("##row", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
@@ -286,18 +316,30 @@ int OptionRow(const char* label, const char* value) {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) step = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) step = 1;
     }
-    RowLabel(box, label);
+
+    ImGui::SetCursorPos(ImVec2(box.row_x + style.ItemInnerSpacing.x, text_y));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(Ui(label).c_str());
+
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav | ImGuiItemFlags_ButtonRepeat, true);
     float block_x = box.row_x + box.row_w - box.block_w;
-    ImGui::SetCursorPos(ImVec2(block_x, box.row_y));
-    if (ImGui::ArrowButton("##dec", ImGuiDir_Left)) step = -1;
-    float value_x = block_x + box.row_h + style.ItemSpacing.x;
+
+    // "<" — decrement / toggle
+    ImGui::SetCursorPos(ImVec2(block_x, btn_y));
+    if (ImGui::Button("<", ImVec2(btn_size, btn_size))) step = -1;
+
+    // value text — centred horizontally in its column
+    float value_x = block_x + btn_size + gap;
     float pad = (box.value_w - ImGui::CalcTextSize(value).x) * 0.5f;
-    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
+    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), text_y));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(value);
-    ImGui::SetCursorPos(ImVec2(value_x + box.value_w + style.ItemSpacing.x, box.row_y));
-    if (ImGui::ArrowButton("##inc", ImGuiDir_Right)) step = 1;
+
+    // ">" — increment / toggle
+    float btn2_x = value_x + box.value_w + gap;
+    ImGui::SetCursorPos(ImVec2(btn2_x, btn_y));
+    if (ImGui::Button(">", ImVec2(btn_size, btn_size))) step = 1;
+
     ImGui::PopItemFlag();
     ImGui::PopID();
     EndRow(box);
@@ -322,7 +364,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kEspRed, kEspGreen, kEspBlue, kCrosshair, kCrosshairStyle, kCrosshairSize, kCrosshairThickness,
              kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
              kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
-             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
+             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
+             kCheatButtonSize, kCheatButtonGap };
 
 using rows::Kind;
 using rows::Row;
@@ -389,7 +432,9 @@ constexpr Row kGeneralRows[] = {
 // The cheats page. The ESP rows have their own ESP heading (below PLAYER, above CROSSHAIR) so the
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
-// Every heading is collapsible — click it to toggle.
+// Every heading is collapsible — click it to toggle. The CHEAT UI section at the bottom customises the
+// "<" / ">" buttons that step every other row here: bigger for fat fingers, smaller for a dense layout,
+// and the gap between the button and the ON/OFF text is independent so the two rows can be tuned.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -428,6 +473,9 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
+    {Kind::Heading, -1, "CHEAT UI"},
+    {Kind::Value, kCheatButtonSize, "CHEAT BUTTON SIZE"},
+    {Kind::Value, kCheatButtonGap, "CHEAT BUTTON GAP"},
 };
 
 struct Credit {
@@ -700,6 +748,16 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
             return true;
+        case kCheatButtonSize:
+            if (step) o.cheat_button_size = uint32_t(StepRange(int(o.cheat_button_size), 50, 200, 5, step));
+            std::snprintf(text, sizeof(text), o.cheat_button_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
+                          o.cheat_button_size);
+            return true;
+        case kCheatButtonGap:
+            if (step) o.cheat_button_gap = uint32_t(StepRange(int(o.cheat_button_gap), 0, 300, 5, step));
+            std::snprintf(text, sizeof(text), o.cheat_button_gap == 100 ? "%u%% (DEFAULT)" : "%u%%",
+                          o.cheat_button_gap);
+            return true;
         default:
             return false;
     }
@@ -870,6 +928,8 @@ void RestoreDefaults(int page) {
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
+        o.cheat_button_size = none.cheat_button_size;
+        o.cheat_button_gap = none.cheat_button_gap;
         Changed();
         return;
     }
@@ -920,6 +980,8 @@ void RestoreDefaults(int page) {
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
+    o.cheat_button_size = keep.cheat_button_size;
+    o.cheat_button_gap = keep.cheat_button_gap;
     Changed();
 }
 
