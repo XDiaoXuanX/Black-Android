@@ -71,6 +71,12 @@ constexpr uint32_t kPickupTable = 0x5844;      // its pickups, 0x160 bytes each:
 constexpr int kAmmoTypes = 10;
 constexpr uint32_t kPlayerMedkits = 0x8E1;  // byte in the player: the medkits held (found by the pickup tracker), the game holds 3
 constexpr int kMedkitMax = 3;
+// grenades: the same field cheats.cpp uses for the infinite-grenades cheat (kCharGrenades = 0x286, uint16 on the
+// character). The standard grenade loadout in most classes is 4; setting the count to that fills the HUD's grenade
+// icons. The game's natural max is 4 for most classes, so 4 is a safe target (setting higher than the HUD shows
+// leaves the extra invisible but usable).
+constexpr uint32_t kCharGrenades = 0x286;  // uint16
+constexpr int kGrenadeMax = 4;
 constexpr uint32_t kAmmoMax = 999;
 // weapon and its data
 constexpr uint32_t kWeaponType = 0;  // byte: index in the table
@@ -150,6 +156,11 @@ uint32_t g_swap_back = 0;           // a weapon to bring back out once the other
 uint32_t g_spread_weapon = 0;
 float    g_spread_orig[kDataSpreadCount] = {};
 
+// supply fill requests (one-shot actions): set by the panel, consumed by WeaponsTick on the game thread
+std::atomic<bool> g_fill{false};
+std::atomic<bool> g_medkits{false};
+std::atomic<bool> g_grenades{false};
+
 std::string CodeOf(const std::string& key_name) {
     return key_name.size() > 4 && key_name.compare(0, 4, "BG1_") == 0 ? key_name.substr(4) : key_name;
 }
@@ -201,8 +212,6 @@ bool SuppSupportedType(uint32_t manager, int type) {
 std::mutex g_lock;
 weapons::View g_view;
 std::atomic<int> g_give{-1};
-std::atomic<bool> g_fill{false};
-std::atomic<bool> g_medkits{false};
 
 void SetStatus(const std::string& text) {
     std::lock_guard<std::mutex> lock(g_lock);
@@ -530,6 +539,18 @@ void DoFillMedkits() {
     SetStatus("Medkits filled (" + std::to_string(kMedkitMax) + "/" + std::to_string(kMedkitMax) + ")");
 }
 
+// Fill grenades to the standard loadout. Same pattern as DoFillMedkits: only touched when the count is below the
+// max, so a higher count (from pickups) is never reduced. The grenade field is the character's uint16 at +0x286 —
+// the same one the infinite-grenades cheat reads in cheats.cpp — so the fill and the cheat stay in sync.
+void DoFillGrenades() {
+    Level l;
+    if (!ReadLevel(l)) return SetStatus("Only during a level");
+    uint16_t& n = G<uint16_t>(l.player + kCharGrenades);
+    if (n >= kGrenadeMax) return SetStatus("Grenades already full (" + std::to_string(kGrenadeMax) + ")");
+    n = uint16_t(kGrenadeMax);
+    SetStatus("Grenades filled (" + std::to_string(kGrenadeMax) + "/" + std::to_string(kGrenadeMax) + ")");
+}
+
 void DoGive(X86Context& ctx, int code) {
     Level l;
     if (!ReadLevel(l)) return SetStatus("Only during a level");
@@ -695,6 +716,7 @@ void Give(int type) { g_give = type; }
 
 void FillAmmo() { g_fill = true; }
 void FillMedkits() { g_medkits = true; }
+void FillGrenades() { g_grenades = true; }
 
 void SetAutoSuppressor(bool on) { g_auto_suppressor = on; }  // add its declaration to game/weapons.h
 
@@ -706,6 +728,7 @@ void WeaponsTick(X86Context& ctx) {
     if (int type = g_give.exchange(-1); type >= 0) DoGive(ctx, type);
     if (g_fill.exchange(false)) DoFill();
     if (g_medkits.exchange(false)) DoFillMedkits();
+    if (g_grenades.exchange(false)) DoFillGrenades();
     if (++tick % 10 == 0) Refresh();
     Heartbeat();
     Level l;
