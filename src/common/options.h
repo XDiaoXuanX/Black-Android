@@ -168,11 +168,23 @@ struct Options {
     //   cheat_button_size   50..1000 — side of the "<" / ">" buttons (100 = standard frame height)
     //   cheat_button_gap     0..1000 — gap between a button and the value text (100 = standard spacing)
     //
-    // All three are edited in the CHEATS page's CHEAT UI section; a RESET CHEAT UI row returns all three
-    // to 100% in one press. Applied live (no restart), persisted to settings like every other option.
+    // The panel can also be dragged: hold the mouse on the title bar ("CHEATS" at the top) and move it
+    // to any position. The drag is clamped so ~4 ems of the panel stay on screen at each edge, and the
+    // new position is stored here so it survives a panel close/reopen and the session. A "Defaults" press
+    // in the footer resets it back to the centered default.
+    //
+    // All three size settings and the position are edited/used in the CHEATS page's CHEAT UI section
+    // (position is drag-driven); a RESET CHEAT UI row returns the three sizes to 100% in one press.
+    // Applied live (no restart), persisted to settings like every other option.
     uint32_t cheat_panel_size = 100;
     uint32_t cheat_button_size = 100;
     uint32_t cheat_button_gap = 100;
+    // The saved top-left position of the panel window, in screen pixels. INT32_MIN in both is the sentinel
+    // for "never dragged yet — use the centered default computed from the viewport". DrawTitle writes the
+    // current position here after each drag; DrawPanel reads it to restore the last position; the footer
+    // "Defaults" button sets both back to INT32_MIN to recenter.
+    int32_t panel_pos_x = INT32_MIN;
+    int32_t panel_pos_y = INT32_MIN;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
