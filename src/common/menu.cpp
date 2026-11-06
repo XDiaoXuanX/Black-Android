@@ -1010,4 +1010,205 @@ void Defaults() {
 
 void DrawTitle(const char* caption) {
     std::string title = Ui(caption);
-    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str
+    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(title_pad, 0.0f));
+    ImGui::TextUnformatted(title.c_str());
+}
+
+void DrawFooter(float em) {
+    ImGui::Separator();
+    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    const char* hint = "";
+    if (g_capture >= 0) hint = "Press a key or mouse button to bind, Escape cancels";
+    else if (g_page == kKeyboardPage && g_hovered_box >= 0) hint = "Right click or Delete clears the key";
+    else if (g_page == kCheatsPage) hint = "A weapon replaces the one not in hand, gold names are held";
+    ImGui::TextUnformatted(Ui(hint, false).c_str());
+    ImGui::PopStyleColor();
+    float bw = em * 8;
+    float buttons_pad = ImGui::GetContentRegionAvail().x - bw * 2 - ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(buttons_pad, 0.0f));
+    if (ImGui::Button(Ui("Back", false).c_str(), ImVec2(bw, 0))) ToggleMenu();
+    ImGui::SameLine();
+    if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0))) Defaults();
+}
+
+void DragScroll(float em) {
+    constexpr float kFriction = 6.0f;
+    static bool dragging = false;
+    static float glide = 0;
+    ImGuiIO& io = ImGui::GetIO();
+    bool inside = ImGui::GetCurrentWindow()->InnerRect.Contains(io.MouseClickedPos[0]);
+    if (ImGui::IsMouseClicked(0)) {
+        dragging = false;
+        glide = 0;
+    }
+    if (ImGui::IsMouseDown(0) && inside) {
+        if (!dragging && std::fabs(ImGui::GetMouseDragDelta(0).y) > em * 0.5f) dragging = true;
+        if (!dragging) return;
+        ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+        if (io.DeltaTime > 0) glide = (glide - io.MouseDelta.y / io.DeltaTime) * 0.5f;
+        ImGui::ClearActiveID();
+        return;
+    }
+    dragging = false;
+    if (std::fabs(glide) < em) {
+        glide = 0;
+        return;
+    }
+    ImGui::SetScrollY(ImGui::GetScrollY() + glide * io.DeltaTime);
+    glide *= std::max(0.0f, 1.0f - kFriction * io.DeltaTime);
+}
+
+constexpr float kUiHeightShare = 0.030f;
+constexpr float kUiWidthShare = 0.0192f;
+
+void DrawPanel() {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(em * 80, em * 50), ImGuiCond_Always);
+    for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 1.6f, em * 0.9f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(em * 0.7f, em * 0.45f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(em * 0.6f, em * 0.25f));
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
+    if (ImGui::Begin("##settings", nullptr, kFlags)) {
+        DrawTitle("CHEATS");
+        ImGui::Separator();
+        float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.8f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.5f);
+        ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
+        DragScroll(em);
+        g_hovered_box = -1;
+        DrawRows(g_page);
+        if (g_page == kCheatsPage) DrawWeapons();
+        ImGui::EndChild();
+        ImGui::PopStyleVar(3);
+        DrawFooter(em);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(6);
+    ImGui::PopStyleColor(int(std::size(kPanelColors)));
+}
+
+uint32_t RefreshRate() {
+    SDL_Window* w = static_cast<SDL_Window*>(Window());
+    const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(w ? SDL_GetDisplayForWindow(w) : SDL_GetPrimaryDisplay());
+    return m && m->refresh_rate > 1 ? uint32_t(std::lround(m->refresh_rate)) : 0;
+}
+
+void PaceAt(uint32_t cap) {
+    using clock = std::chrono::steady_clock;
+    static clock::time_point next = clock::now();
+    auto now = clock::now();
+    if (!cap) {
+        next = now;
+        return;
+    }
+    auto period = std::chrono::nanoseconds(1000000000ull / cap);
+    next += period;
+    if (next < now - period) next = now;
+    while (clock::now() + std::chrono::milliseconds(2) < next) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    while (clock::now() < next) std::this_thread::yield();
+}
+
+constexpr float kPanelWideEms = 80.0f;
+constexpr float kPanelTallEms = 50.0f;
+constexpr float kPanelMargin = 1.08f;
+
+float InterfaceScale(ImGuiIO& io) {
+    float font_base = io.FontGlobalScale > 0.0f ? ImGui::GetFontSize() / io.FontGlobalScale : 16.0f;
+    float fit_x = io.DisplaySize.x / (kPanelWideEms * font_base * kPanelMargin);
+    float fit_y = io.DisplaySize.y / (kPanelTallEms * font_base * kPanelMargin);
+    float density = std::min(io.DisplaySize.x, io.DisplaySize.y) / 720.0f;
+    return std::clamp(std::min({density, fit_x, fit_y}), 0.7f, 2.5f);
+}
+
+}  // namespace
+
+void PaceFrame() {
+    if (Get().fps_cap != kFpsCapRefresh) {
+        Pace();
+        return;
+    }
+    constexpr uint32_t kRefreshMargin = 3;
+    uint32_t rate = RefreshRate();
+    PaceAt(rate > kRefreshMargin ? rate - kRefreshMargin : 0);
+}
+
+const rows::Row* rows::Page(int page, size_t* count) {
+    if (page == kKeyboardPage) { *count = InputRows().size(); return InputRows().data(); }
+    if (page == kCheatsPage) { *count = std::size(kCheatRows); return kCheatRows; }
+    if (page == kCreditsPage) { *count = CreditRows().size(); return CreditRows().data(); }
+    if (page == kTouchPage) { *count = std::size(kTouchRows); return kTouchRows; }
+    if (page == kGeneralPage) { *count = std::size(kGeneralRows); return kGeneralRows; }
+    *count = std::size(kGraphicsRows);
+    return kGraphicsRows;
+}
+
+const rows::Row* rows::Controller(size_t* count) {
+    *count = std::size(kControllerRows);
+    return kControllerRows;
+}
+
+std::string rows::Value(const Row& row, int step) {
+    if (row.kind == Kind::Bind) return KeyText(input::Binding(size_t(row.id)));
+    if (row.id == kCredit) {
+        const Credit* c = CreditOf(row);
+        if (!c || !c->value) return " ";
+        if (step && c->url) SDL_OpenURL(c->url);
+        return c->value;
+    }
+    return RowText(row.id, step);
+}
+
+void rows::Defaults(int page) { RestoreDefaults(page); }
+bool rows::Restorable(int page) { return page == kKeyboardPage || page == kCheatsPage; }
+
+bool rows::Enabled(const Row& row) {
+    if (row.kind != Kind::Value) return true;
+    bool dynamic = game::Opt().dynamic_resolution;
+    switch (row.id) {
+        case kRenderResolution: return !dynamic;
+        case kDynamicTarget:
+        case kDynamicMin:
+        case kDynamicMax:
+        case kDynamicHold: return dynamic;
+        default: return true;
+    }
+}
+
+bool rows::Opens(const Row& row) {
+    return row.kind == Kind::Value && (row.id == kTouchEdit || row.id == kCheckUpdates || row.id == kCredit);
+}
+
+bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
+bool Capturing() { return g_capture >= 0; }
+
+void ToggleMenu() {
+    bool open = !MenuOpen();
+    g_open.store(open, std::memory_order_relaxed);
+    g_capture = -1;
+    if (open) input::ReleaseCursor();
+}
+
+void DrawUi(double fps) {
+    game::g_fps = float(fps);
+    ImGuiIO& io = ImGui::GetIO();
+    if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+    else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    io.KeyRepeatRate = 0.1f;
+    io.FontGlobalScale = InterfaceScale(io);
+    if (MenuOpen()) {
+        PollCapture();
+        DrawPanel();
+    }
+}
+
+}  // namespace app
