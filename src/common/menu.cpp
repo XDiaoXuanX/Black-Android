@@ -345,6 +345,9 @@ constexpr Row kGeneralRows[] = {
     {Kind::Value, kAutoUpdate, "STARTUP UPDATE CHECK"},
 };
 
+// The cheats page. The ESP rows have their own ESP heading (below PLAYER, above CROSSHAIR) so the
+// wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
+// named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -357,8 +360,9 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGodMode, "GOD MODE"},
     {Kind::Value, kInfiniteMedkits, "INFINITE MEDKITS"},
     {Kind::Value, kOneHitKill, "ONE-HIT KILL"},
-    {Kind::Value, kEsp, "ESP MODE"},                // <-- master on/off (was "ESP MASTER")
-    {Kind::Value, kEspDisplay, "ESP MODE TARGET"},  // <-- selector mode (was "ESP MODE")
+    {Kind::Heading, -1, "ESP"},
+    {Kind::Value, kEsp, "ESP MODE"},
+    {Kind::Value, kEspDisplay, "ESP MODE TARGET"},
     {Kind::Value, kEspColor, "ESP COLOR"},
     {Kind::Value, kEspRed, "ESP RED"},
     {Kind::Value, kEspGreen, "ESP GREEN"},
