@@ -22,6 +22,7 @@ void ViewScale(float xy);
 
 namespace game {
 void EspCamera();  // esp.cpp
+namespace savestate { void Tick(); }  // savestate.cpp
 }
 
 namespace {
@@ -146,6 +147,7 @@ X86_FUNC(sub_001F9130) { Return(ctx, ctx.eax, 1); }
 void WeaponsTick(X86Context& ctx);  // weapons.cpp: the weapons page's requests
 void MenuTick(X86Context& ctx, uint8_t*) {
     WeaponsTick(ctx);
+    game::savestate::Tick();  // save state / load state (F5/F9 and panel requests)
     using clock = std::chrono::steady_clock;
     static clock::time_point last;
     static float carry;
