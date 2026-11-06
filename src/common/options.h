@@ -111,6 +111,28 @@ struct Options {
     uint32_t esp_red = 224;    // 0..255, custom red    (224/255 ≈ 0.88, the soft white the ESP shipped with)
     uint32_t esp_green = 219;  // 0..255, custom green  (219/255 ≈ 0.86)
     uint32_t esp_blue = 209;   // 0..255, custom blue   (209/255 ≈ 0.82)
+    // ---- crosshair ---------------------------------------------------------------------------------------
+    // A crosshair drawn in the centre of the viewport, custom shape and colour (like ESP's line, it uses
+    // the game's own untextured triangle batch at esp.cpp's kTriangles). Independent of the ESP master
+    // toggle: crosshair draws even when ESP is off, and vice versa. Sizes are in "pixels at 480p" (the
+    // ESP thickness measure) so they scale with the render resolution via the `unit` passed to DrawEsp.
+    //
+    // Shapes:  0 = + (cross)   1 = * (star)   2 = X (diagonal cross)   3 = DOT (small square)
+    // The + and X styles are the two halves of the *; the * is both together.
+    //
+    // Colour:  same scheme as ESP. crosshair_color picks a preset from kEspPresets (WHITE, RED, GREEN,
+    // CYAN, YELLOW, MAGENTA, ORANGE, PURPLE) or 8 (CUSTOM) reads crosshair_red / crosshair_green /
+    // crosshair_blue. Stepping the preset writes its RGB into those fields (like ESP), and any manual
+    // change of them switches the preset back to CUSTOM. Alpha is always 1 (fully opaque).
+    bool crosshair = false;  // master toggle
+    uint32_t crosshair_style = 0;  // 0=+, 1=*, 2=X, 3=DOT
+    uint32_t crosshair_size = 8;  // pixels at 480p, the arm length from the gap
+    uint32_t crosshair_thickness = 2;  // pixels at 480p, the arm's width
+    uint32_t crosshair_gap = 4;  // pixels at 480p, the empty centre (0 = arms meet in the middle)
+    uint32_t crosshair_color = 0;  // 0..7 preset, 8 CUSTOM (uses crosshair_red / green / blue below)
+    uint32_t crosshair_red = 224;    // 0..255, custom red
+    uint32_t crosshair_green = 219;  // 0..255, custom green
+    uint32_t crosshair_blue = 209;   // 0..255, custom blue
     bool aimbot = false;  // cheat: aiming in turns the view to the body of the enemy nearest the crosshair
     // cheat: where the aimbot aims on the enemy. 0 the neck just under the chin (lethal, forgiving to bob),
     // 1 the chest centre (easier to land, less lethal), 2 the legs (slows a sprinting enemy without killing),
