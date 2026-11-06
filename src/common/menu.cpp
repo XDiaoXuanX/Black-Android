@@ -1095,15 +1095,14 @@ void DrawWeapons() {
             }
         }
     }
+    // Each fill action has its own full-width button on its own row so FILL AMMUNITION sits exactly like
+    // FILL MEDKITS and FILL GRENADES — same width, same section (SUPPLIES), same visual weight. The status
+    // line below is shared: the last DoFill* call wrote it (View::status), so the button row stays the same
+    // height and the message line doesn't jump between actions.
     if (Section("SUPPLIES")) {
-        // Three fill actions in a row: AMMUNITION, MEDKITS, GRENADES. Each takes a third of the row.
-        float gap = ImGui::GetStyle().ItemSpacing.x;
-        float w = (ImGui::GetContentRegionAvail().x - gap * 2) / 3;
-        if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(w, 0))) weapons::FillAmmo();
-        ImGui::SameLine();
-        if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(w, 0))) weapons::FillMedkits();
-        ImGui::SameLine();
-        if (ImGui::Button(Ui("FILL GRENADES").c_str(), ImVec2(w, 0))) weapons::FillGrenades();
+        if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(-1, 0))) weapons::FillAmmo();
+        if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(-1, 0))) weapons::FillMedkits();
+        if (ImGui::Button(Ui("FILL GRENADES").c_str(), ImVec2(-1, 0))) weapons::FillGrenades();
         if (!v.status.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, kDim);
             ImGui::AlignTextToFramePadding();
