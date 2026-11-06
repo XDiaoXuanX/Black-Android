@@ -282,11 +282,46 @@ void FillItem() {
 // Each option row: label on the left, "<" button, value text, ">" button on the right. Both buttons toggle
 // a boolean row (INFINITE AMMO, GOD MODE, …) — a boolean row ignores the step sign (Flip flips on any
 // nonzero step) — and step a multi-value row (RAPID FIRE, GAME SPEED, ESP COLOR, AIMBOT TARGET, …) by -1
-// / +1. Button size, gap and label size come from em/base_h (already scaled by panel size via
-// InterfaceScale), so everything grows/shrinks together with the panel — no per-element settings.
+// / +1.
+//
+// Button size and gap come from game::Opt():
+//   cheat_button_size  50..1000 (% of the standard frame height) — button side in pixels
+//   cheat_button_gap    0..1000 (% of the standard ItemSpacing) — distance between button and value text
+// Both are multiplied on top of em/base_h, which are already scaled by cheat_panel_size (via
+// io.FontGlobalScale / InterfaceScale), so raising the overall panel size raises everything together.
+// A safety cap keeps the two buttons at or under half the row width, so extreme settings can't overflow.
+// Label and value text stay at em's standard size — only the buttons and their spacing get the extra
+// per-element multipliers.
 int OptionRow(const char* label, const char* value) {
     const ImGuiStyle& style = ImGui::GetStyle();
-    RowBox box = MeasureRow();
+    const game::Options& opts = game::Opt();
+    float em = ImGui::GetFontSize();
+    float base_h = ImGui::GetFrameHeight();
+    float size_pct = float(std::clamp(opts.cheat_button_size, 50u, 1000u)) / 100.0f;
+    float gap_pct = float(std::clamp(opts.cheat_button_gap, 0u, 1000u)) / 100.0f;
+
+    RowBox box;
+    box.em = em;
+    box.row_w = ImGui::GetContentRegionAvail().x;
+    box.value_w = em * kValueEms;
+
+    // btn_size follows base_h (which follows em → follows panel_size) times the per-element setting. Capped
+    // at 1/4 row width so two buttons never take more than half the row — the label and value still fit.
+    float btn_size_raw = base_h * size_pct;
+    float btn_size = std::min(btn_size_raw, box.row_w * 0.25f);
+    // gap follows ItemSpacing (which follows font) times the per-element setting. No cap needed; a huge gap
+    // pushes the buttons towards the edges but doesn't overflow vertically.
+    float gap = style.ItemSpacing.x * gap_pct;
+
+    box.row_h = std::max(base_h, btn_size);
+    box.block_w = btn_size * 2 + box.value_w + gap * 2;
+    box.row_x = ImGui::GetCursorPosX();
+    box.row_y = ImGui::GetCursorPosY();
+
+    // Center text and buttons vertically when btn_size exceeds the standard frame height.
+    float text_y = box.row_y + (box.row_h - base_h) * 0.5f;
+    float btn_y = box.row_y + (box.row_h - btn_size) * 0.5f;
+
     ImGui::PushID(label);
     int step = 0;
     ImGui::Selectable("##row", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
@@ -295,18 +330,29 @@ int OptionRow(const char* label, const char* value) {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) step = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) step = 1;
     }
-    RowLabel(box, label);
+    ImGui::SetCursorPos(ImVec2(box.row_x + style.ItemInnerSpacing.x, text_y));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(Ui(label).c_str());
+
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav | ImGuiItemFlags_ButtonRepeat, true);
     float block_x = box.row_x + box.row_w - box.block_w;
-    ImGui::SetCursorPos(ImVec2(block_x, box.row_y));
-    if (ImGui::Button("<", ImVec2(box.row_h, box.row_h))) step = -1;
-    float value_x = block_x + box.row_h + style.ItemSpacing.x;
+
+    // "<" — decrement / toggle
+    ImGui::SetCursorPos(ImVec2(block_x, btn_y));
+    if (ImGui::Button("<", ImVec2(btn_size, btn_size))) step = -1;
+
+    // value text — centred horizontally in its column, at standard font size
+    float value_x = block_x + btn_size + gap;
     float pad = (box.value_w - ImGui::CalcTextSize(value).x) * 0.5f;
-    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
+    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), text_y));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(value);
-    ImGui::SetCursorPos(ImVec2(value_x + box.value_w + style.ItemSpacing.x, box.row_y));
-    if (ImGui::Button(">", ImVec2(box.row_h, box.row_h))) step = 1;
+
+    // ">" — increment / toggle
+    float btn2_x = value_x + box.value_w + gap;
+    ImGui::SetCursorPos(ImVec2(btn2_x, btn_y));
+    if (ImGui::Button(">", ImVec2(btn_size, btn_size))) step = 1;
+
     ImGui::PopItemFlag();
     ImGui::PopID();
     EndRow(box);
@@ -332,7 +378,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
              kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
-             kCheatPanelSize, kCheatReset };
+             kCheatPanelSize, kCheatButtonSize, kCheatButtonGap, kCheatReset };
 
 using rows::Kind;
 using rows::Row;
@@ -400,8 +446,7 @@ constexpr Row kGeneralRows[] = {
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
 // Every heading is collapsible — click it to toggle. The CHEAT UI section at the bottom offers overall
-// panel size and a one-press reset back to default (100%). No per-element sizing — those follow em /
-// base_h and scale with panel size automatically.
+// panel size, per-element button size and gap, and a one-press reset that returns all three to 100%.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -442,6 +487,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
     {Kind::Heading, -1, "CHEAT UI"},
     {Kind::Value, kCheatPanelSize, "CHEAT PANEL SIZE"},
+    {Kind::Value, kCheatButtonSize, "CHEAT BUTTON SIZE"},
+    {Kind::Value, kCheatButtonGap, "CHEAT BUTTON GAP"},
     {Kind::Value, kCheatReset, "RESET CHEAT UI"},
 };
 
@@ -720,11 +767,27 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), o.cheat_panel_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
                           o.cheat_panel_size);
             return true;
+        case kCheatButtonSize:
+            if (step) o.cheat_button_size = uint32_t(StepRange(int(o.cheat_button_size), 50, 1000, 5, step));
+            std::snprintf(text, sizeof(text), o.cheat_button_size == 100 ? "%u%% (DEFAULT)" : "%u%%",
+                          o.cheat_button_size);
+            return true;
+        case kCheatButtonGap:
+            if (step) o.cheat_button_gap = uint32_t(StepRange(int(o.cheat_button_gap), 0, 1000, 5, step));
+            std::snprintf(text, sizeof(text), o.cheat_button_gap == 100 ? "%u%% (DEFAULT)" : "%u%%",
+                          o.cheat_button_gap);
+            return true;
         case kCheatReset:
+            // Reset ALL THREE cheat-UI settings back to their defaults in one press. Panel Size is
+            // included, not just the per-element size/gap — a user who set Panel Size=200, Button
+            // Size=150, Button Gap=200 in a session and wants everything back to stock gets it here
+            // without touching the three rows individually.
             if (step) {
                 o.cheat_panel_size = 100;
+                o.cheat_button_size = 100;
+                o.cheat_button_gap = 100;
             }
-            std::snprintf(text, sizeof(text), "TAP < OR > TO RESET");
+            std::snprintf(text, sizeof(text), "RESET ALL 3 -> 100%%");
             return true;
         default:
             return false;
@@ -897,6 +960,8 @@ void RestoreDefaults(int page) {
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
         o.cheat_panel_size = none.cheat_panel_size;
+        o.cheat_button_size = none.cheat_button_size;
+        o.cheat_button_gap = none.cheat_button_gap;
         Changed();
         return;
     }
@@ -948,6 +1013,8 @@ void RestoreDefaults(int page) {
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
     o.cheat_panel_size = keep.cheat_panel_size;
+    o.cheat_button_size = keep.cheat_button_size;
+    o.cheat_button_gap = keep.cheat_button_gap;
     Changed();
 }
 
