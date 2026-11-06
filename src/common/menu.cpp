@@ -23,7 +23,6 @@
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
 #include "common/translations.h"
-#include "game/savestate.h"
 #include "game/weapons.h"
 
 namespace gyro {
@@ -277,8 +276,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
              kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor,
              kEspRed, kEspGreen, kEspBlue, kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
-             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
-             kSaveSlot, kSaveState, kLoadState, kSaveInfo, kSaveDelete };
+             kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits };
 
 using rows::Kind;
 using rows::Row;
@@ -368,12 +366,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
-    {Kind::Heading, -1, "SAVE STATE"},
-    {Kind::Value, kSaveSlot, "SAVE SLOT"},
-    {Kind::Value, kSaveState, "SAVE STATE"},
-    {Kind::Value, kLoadState, "LOAD STATE"},
-    {Kind::Value, kSaveInfo, "SLOT INFO"},
-    {Kind::Value, kSaveDelete, "DELETE SLOT"},
 };
 
 struct Credit {
@@ -600,25 +592,6 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
             return true;
-        case kSaveSlot:
-            if (step) o.save_slot = uint32_t(StepRange(int(o.save_slot), 0, int(game::savestate::kMaxSlots) - 1, 1, step));
-            std::snprintf(text, sizeof(text), "%u", o.save_slot);
-            return true;
-        case kSaveState:
-            if (step) game::savestate::RequestSave(o.save_slot);
-            std::snprintf(text, sizeof(text), "SAVE");
-            return true;
-        case kLoadState:
-            if (step) game::savestate::RequestLoad(o.save_slot);
-            std::snprintf(text, sizeof(text), "LOAD");
-            return true;
-        case kSaveInfo:
-            std::snprintf(text, sizeof(text), "%s", game::savestate::SaveInfo(o.save_slot));
-            return true;
-        case kSaveDelete:
-            if (step) game::savestate::Delete(o.save_slot);
-            std::snprintf(text, sizeof(text), "DELETE");
-            return true;
         default:
             return false;
     }
@@ -780,7 +753,6 @@ void RestoreDefaults(int page) {
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
-        o.save_slot = none.save_slot;
         Changed();
         return;
     }
@@ -822,7 +794,6 @@ void RestoreDefaults(int page) {
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
-    o.save_slot = keep.save_slot;
     Changed();
 }
 
