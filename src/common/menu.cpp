@@ -1219,12 +1219,51 @@ void DrawWeapons() {
 void Defaults() {
     g_capture = -1;
     RestoreDefaults(g_page);
+    // Reset the panel position back to the centered default in the same press. A user who dragged it
+    // off-screen or into an awkward corner gets it back with one press. RestoreDefaults doesn't touch
+    // the position (it's a UI detail, not a setting), so the reset lives here in the footer button that
+    // already means "put the whole UI back to defaults".
+    game::Options& o = game::Opt();
+    o.panel_pos_x = INT32_MIN;
+    o.panel_pos_y = INT32_MIN;
 }
 
 void DrawTitle(const char* caption) {
     std::string title = Ui(caption);
-    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(title_pad, 0.0f));
+    const ImGuiStyle& style = ImGui::GetStyle();
+    // The title bar doubles as the drag handle: hold the mouse on the "CHEATS" strip and move it to drag
+    // the whole panel anywhere. The new position is written to game::Opt().panel_pos_x/y (so it survives
+    // the panel closing/reopening and the session) and clamped to leave at least ~4 ems of the panel on
+    // screen at each edge — enough to grab the title bar again. The footer "Defaults" button resets both
+    // back to INT32_MIN to recenter.
+    ImVec2 row_start = ImGui::GetCursorScreenPos();
+    float row_w = ImGui::GetContentRegionAvail().x;
+    float row_h = ImGui::GetTextLineHeight() + style.FramePadding.y * 2;
+    ImGui::InvisibleButton("##title_drag", ImVec2(row_w, row_h));
+    if (ImGui::IsItemActive()) {
+        ImVec2 d = ImGui::GetIO().MouseDelta;
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImVec2 np(wp.x + d.x, wp.y + d.y);
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        float em = ImGui::GetFontSize();
+        float min_vis = em * 4;
+        ImVec2 ws = ImGui::GetWindowSize();
+        np.x = std::clamp(np.x, -ws.x + min_vis, vp->WorkSize.x - min_vis);
+        np.y = std::clamp(np.y, -ws.y + min_vis, vp->WorkSize.y - min_vis);
+        ImGui::SetWindowPos(np);
+        game::Options& o = game::Opt();
+        o.panel_pos_x = int32_t(np.x);
+        o.panel_pos_y = int32_t(np.y);
+    }
+    if (ImGui::IsItemDeactivated()) {
+        // Drag ended: persist the new position to the settings file (the incremental writes above are only
+        // in memory; Changed() → Save() serializes them). The audio-output side effect of Changed() is a
+        // no-op when the audio output hasn't been touched — it re-sets the same value.
+        Changed();
+    }
+    // Draw the title text on top of the invisible button, centered in the row
+    float title_pad = (row_w - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(row_start.x + std::max(title_pad, 0.0f), row_start.y + style.FramePadding.y));
     ImGui::TextUnformatted(title.c_str());
 }
 
@@ -1278,8 +1317,17 @@ constexpr float kUiWidthShare = 0.0192f;
 void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
-    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 80, em * 50), ImGuiCond_Always);
+    ImVec2 win_size(em * 80, em * 50);
+    // Position: saved value if the user has dragged the panel at least once, else the centered default.
+    // INT32_MIN in both fields is the "never dragged" sentinel. DrawTitle writes the current position here
+    // on every drag; the footer "Defaults" button resets it.
+    ImVec2 center = vp->GetCenter();
+    ImVec2 pos(center.x - win_size.x * 0.5f, center.y - win_size.y * 0.5f);
+    if (game::Opt().panel_pos_x != INT32_MIN && game::Opt().panel_pos_y != INT32_MIN) {
+        pos = ImVec2(float(game::Opt().panel_pos_x), float(game::Opt().panel_pos_y));
+    }
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(win_size, ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -1288,7 +1336,8 @@ void DrawPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(em * 0.7f, em * 0.45f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(em * 0.6f, em * 0.25f));
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
-                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
+                                        ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
         DrawTitle("CHEATS");
         ImGui::Separator();
