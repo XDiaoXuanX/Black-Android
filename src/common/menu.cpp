@@ -1096,11 +1096,14 @@ void DrawWeapons() {
         }
     }
     if (Section("SUPPLIES")) {
+        // Three fill actions in a row: AMMUNITION, MEDKITS, GRENADES. Each takes a third of the row.
         float gap = ImGui::GetStyle().ItemSpacing.x;
-        float w = (ImGui::GetContentRegionAvail().x - gap) / 2;
+        float w = (ImGui::GetContentRegionAvail().x - gap * 2) / 3;
         if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(w, 0))) weapons::FillAmmo();
         ImGui::SameLine();
         if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(w, 0))) weapons::FillMedkits();
+        ImGui::SameLine();
+        if (ImGui::Button(Ui("FILL GRENADES").c_str(), ImVec2(w, 0))) weapons::FillGrenades();
         if (!v.status.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, kDim);
             ImGui::AlignTextToFramePadding();
