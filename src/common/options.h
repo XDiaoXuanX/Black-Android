@@ -157,22 +157,24 @@ struct Options {
     // cheat: tenths of a degree inside which the aimbot does not turn. Larger leaves the crosshair freer so it
     // can be slid off one enemy onto the next; smaller keeps it locked on the current one. 15 = 1.5 degrees.
     uint32_t aimbot_deadzone = 15;
-    // cheat panel UI: size and gap of the "<" / ">" buttons on every cheat option row (the buttons that
-    // toggle a boolean ON/OFF — e.g. INFINITE AMMO, INFINITE GRENADES, GOD MODE, ONE-HIT KILL — and step
-    // multi-value rows like RAPID FIRE, GAME SPEED, ESP COLOR, AIMBOT TARGET). Both values are percentages
-    // of a standard UI measure:
+    // cheat panel UI: size and gap of the "<" / ">" buttons on every cheat option row, and the size of the
+    // label text and heading text in the panel. All four are percentages of a standard UI measure, 100%
+    // is the historical layout, 1000% is the maximum:
     //
-    //   cheat_button_size  50..200 (100 = the standard frame height; >100 makes the buttons larger and
-    //                              easier to tap on a phone; <100 makes them smaller for a denser layout).
-    //                              The row's height grows to fit the larger of (standard height, button
-    //                              size), so a 150% button does not spill into the next row.
-    //   cheat_button_gap    0..300 (100 = the standard ItemSpacing between controls; 0 puts the value text
-    //                              right up against the buttons; 300 leaves three times the standard gap).
+    //   cheat_button_size   50..1000  — side of the "<" / ">" buttons (100 = standard frame height)
+    //   cheat_button_gap     0..1000  — gap between a button and the value text (100 = standard spacing)
+    //   cheat_label_size    50..1000  — size of the feature name text ("INFINITE AMMO", "GOD MODE", …)
+    //   cheat_heading_size  50..1000  — size of the section heading text ("WEAPONS", "ESP", …)
     //
-    // Both are edited in the CHEATS page's CHEAT UI section, applied live (no restart), and persisted to
-    // settings like every other option. Defaults (100/100) reproduce the previous layout exactly.
+    // The row's height grows to fit the largest of (standard frame height, button size, label size), so
+    // 150% buttons do not spill into the next row. The value text (ON/OFF, 8X, 125%, …) stays at the
+    // standard font size — only the label and the heading scale. All four are edited in the CHEATS page's
+    // CHEAT UI section; a RESET CHEAT UI row in that same section returns all four to 100% in one press.
+    // Applied live (no restart), persisted to settings like every other option.
     uint32_t cheat_button_size = 100;
     uint32_t cheat_button_gap = 100;
+    uint32_t cheat_label_size = 100;
+    uint32_t cheat_heading_size = 100;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
