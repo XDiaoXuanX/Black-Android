@@ -183,14 +183,55 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
     return lo + inc * StepIndex((std::clamp(value, lo, hi) - lo) / inc, step, count);
 }
 
-void Section(const char* title) {
+// ---- collapsible sections ----------------------------------------------------------------------------------
+// Each heading can be collapsed by clicking it, hiding every row until the next heading. State is tracked by
+// the heading's title in this map, so it survives panel closes/reopens during a session (a static map, one
+// entry per title). Default is expanded (the bool is zero-initialised when the entry is first looked up).
+// Not reset on Defaults — collapse state is UI convenience, not a setting.
+std::map<std::string, bool> g_collapsed;
+
+// Draws a collapsible heading. Returns true if the section is expanded (rows below should be drawn), false
+// if collapsed (the caller skips them until the next heading). The whole heading is one full-width clickable
+// strip: hovering highlights it, clicking toggles collapse. A ▶ / ▼ triangle on the left shows the state.
+bool Section(const char* title) {
     float em = ImGui::GetFontSize();
     ImGui::Dummy(ImVec2(0, em * 0.3f));
-    ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
-    ImGui::TextUnformatted(Ui(title).c_str());
-    ImGui::PopStyleColor();
+    std::string key(title);
+    bool& collapsed = g_collapsed[key];
+
+    ImGui::PushID(title);
+    ImVec2 start = ImGui::GetCursorScreenPos();
+    float width = ImGui::GetContentRegionAvail().x;
+    float height = em * 1.3f;
+    if (ImGui::InvisibleButton("##head", ImVec2(width, height))) collapsed = !collapsed;
+    if (ImGui::IsItemHovered()) {
+        ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                                   ImGui::GetColorU32(ImGuiCol_Header));
+    }
+    // triangle + title drawn directly on the window draw list
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImU32 colour = ImGui::GetColorU32(kHeading);
+    float cx = start.x + em * 0.6f;
+    float cy = start.y + height * 0.5f;
+    float sz = em * 0.35f;
+    if (collapsed) {
+        // ▶ right-pointing: section is closed
+        draw->AddTriangleFilled(ImVec2(cx - sz * 0.5f, cy - sz), ImVec2(cx - sz * 0.5f, cy + sz),
+                                 ImVec2(cx + sz * 0.7f, cy), colour);
+    } else {
+        // ▼ down-pointing: section is open
+        draw->AddTriangleFilled(ImVec2(cx - sz, cy - sz * 0.5f), ImVec2(cx + sz, cy - sz * 0.5f),
+                                 ImVec2(cx, cy + sz * 0.7f), colour);
+    }
+    float text_y = start.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+    draw->AddText(ImVec2(start.x + em * 1.4f, text_y), colour, Ui(title).c_str());
+    // restore the layout cursor past the heading row so the separator lands under it
+    ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + height));
+    ImGui::PopID();
+
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, em * 0.1f));
+    if (!collapsed) ImGui::Dummy(ImVec2(0, em * 0.1f));
+    return !collapsed;
 }
 
 constexpr float kValueEms = 12.0f;
@@ -348,6 +389,7 @@ constexpr Row kGeneralRows[] = {
 // The cheats page. The ESP rows have their own ESP heading (below PLAYER, above CROSSHAIR) so the
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
+// Every heading is collapsible — click it to toggle.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -967,12 +1009,18 @@ void KeyRow(const Row& r) {
     g_capture_armed = false;
 }
 
+// Draws a list of rows. Rows after a collapsed heading are skipped until the next heading. The first row
+// starts expanded if there is no heading above it (e.g. the CONTROLLER block, which has no heading).
 void DrawList(const Row* list, size_t count) {
+    bool expanded = true;
     for (size_t i = 0; i < count; i++) {
         const Row& r = list[i];
-        if (r.kind == Kind::Heading) Section(r.label);
-        else if (r.kind == Kind::Value) ValueRow(r);
-        else KeyRow(r);
+        if (r.kind == Kind::Heading) {
+            expanded = Section(r.label);
+        } else if (expanded) {
+            if (r.kind == Kind::Value) ValueRow(r);
+            else KeyRow(r);
+        }
     }
 }
 
@@ -981,80 +1029,84 @@ void DrawRows(int page) {
     const Row* list = rows::Page(page, &count);
     DrawList(list, count);
     if (page != kTouchPage) return;
-    Section("CONTROLLER");
-    DrawList(kControllerRows, std::size(kControllerRows));
+    // The CONTROLLER block has no heading of its own: reuse the TOUCH heading's state so collapsing TOUCH
+    // also collapses the controller rows below it.
+    if (Section("CONTROLLER")) DrawList(kControllerRows, std::size(kControllerRows));
 }
 
 void DrawWeapons() {
     weapons::View v = weapons::Current();
-    Section("GIVE A WEAPON");
-    if (!v.in_level) {
-        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-        ImGui::TextWrapped("%s", Ui("Start or continue a level to choose its weapons.", false).c_str());
-        ImGui::PopStyleColor();
-        return;
-    }
-    constexpr int kColumns = 3;
-    float gap = ImGui::GetStyle().ItemSpacing.x;
-    float w = (ImGui::GetContentRegionAvail().x - gap * (kColumns - 1)) / kColumns;
-    struct GroupTitle {
-        const char* name;
-        const char* hint;
-    };
-    static const GroupTitle kGroupTitles[] = {{"SUPPORTED SUPPRESSOR", "PRESS Y TO TAKE IT OFF"},
-                                              {"UNSUPPORTED SUPPRESSOR", "EXPERIMENTAL"}};
-    auto sub_title = [](const char* text) {
-        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-        ImGui::TextUnformatted(Ui(text).c_str());
-        ImGui::PopStyleColor();
-    };
-    bool sound_only = false;
-    int group = -1, column = 0, variant = -1;
-    for (size_t i = 0; i < v.choices.size(); i++) {
-        const weapons::Choice& c = v.choices[i];
-        if (c.group == group && variant != ((c.type & 0x100) ? 1 : 0)) {
-            variant = (c.type & 0x100) ? 1 : 0;
-            column = 0;
-            ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.15f));
-            if (group == 1) sub_title("WITH SUPPRESSOR (PERMANENT)");
-        }
-        if (c.group != group) {
-            group = c.group;
-            variant = (c.type & 0x100) ? 1 : 0;
-            column = 0;
-            const GroupTitle& title = kGroupTitles[std::clamp(group, 0, 1)];
-            ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.25f));
-            ImGui::TextUnformatted(Ui(title.name).c_str());
-            ImGui::SameLine();
+    if (Section("GIVE A WEAPON")) {
+        if (!v.in_level) {
             ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-            ImGui::TextUnformatted(Ui(title.hint).c_str());
+            ImGui::TextWrapped("%s", Ui("Start or continue a level to choose its weapons.", false).c_str());
             ImGui::PopStyleColor();
-            ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.05f));
-            if (group == 1) sub_title("NO SUPPRESSOR");
+        } else {
+            constexpr int kColumns = 3;
+            float gap = ImGui::GetStyle().ItemSpacing.x;
+            float w = (ImGui::GetContentRegionAvail().x - gap * (kColumns - 1)) / kColumns;
+            struct GroupTitle {
+                const char* name;
+                const char* hint;
+            };
+            static const GroupTitle kGroupTitles[] = {{"SUPPORTED SUPPRESSOR", "PRESS Y TO TAKE IT OFF"},
+                                                      {"UNSUPPORTED SUPPRESSOR", "EXPERIMENTAL"}};
+            auto sub_title = [](const char* text) {
+                ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+                ImGui::TextUnformatted(Ui(text).c_str());
+                ImGui::PopStyleColor();
+            };
+            bool sound_only = false;
+            int group = -1, column = 0, variant = -1;
+            for (size_t i = 0; i < v.choices.size(); i++) {
+                const weapons::Choice& c = v.choices[i];
+                if (c.group == group && variant != ((c.type & 0x100) ? 1 : 0)) {
+                    variant = (c.type & 0x100) ? 1 : 0;
+                    column = 0;
+                    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.15f));
+                    if (group == 1) sub_title("WITH SUPPRESSOR (PERMANENT)");
+                }
+                if (c.group != group) {
+                    group = c.group;
+                    variant = (c.type & 0x100) ? 1 : 0;
+                    column = 0;
+                    const GroupTitle& title = kGroupTitles[std::clamp(group, 0, 1)];
+                    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.25f));
+                    ImGui::TextUnformatted(Ui(title.name).c_str());
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+                    ImGui::TextUnformatted(Ui(title.hint).c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.05f));
+                    if (group == 1) sub_title("NO SUPPRESSOR");
+                }
+                if (column++ % kColumns) ImGui::SameLine();
+                ImGui::PushID(c.type);
+                if (c.held) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+                if (ImGui::Button(c.label.c_str(), ImVec2(w, 0))) weapons::Give(c.type);
+                if (c.held) ImGui::PopStyleColor();
+                ImGui::PopID();
+                sound_only = sound_only || c.sound_only;
+            }
+            if (sound_only) {
+                ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+                ImGui::TextUnformatted(Ui("* SILENCED SOUND ONLY").c_str());
+                ImGui::PopStyleColor();
+            }
         }
-        if (column++ % kColumns) ImGui::SameLine();
-        ImGui::PushID(c.type);
-        if (c.held) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
-        if (ImGui::Button(c.label.c_str(), ImVec2(w, 0))) weapons::Give(c.type);
-        if (c.held) ImGui::PopStyleColor();
-        ImGui::PopID();
-        sound_only = sound_only || c.sound_only;
     }
-    if (sound_only) {
-        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-        ImGui::TextUnformatted(Ui("* SILENCED SOUND ONLY").c_str());
-        ImGui::PopStyleColor();
-    }
-    Section("SUPPLIES");
-    if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(w, 0))) weapons::FillAmmo();
-    ImGui::SameLine();
-    if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(w, 0))) weapons::FillMedkits();
-    if (!v.status.empty()) {
+    if (Section("SUPPLIES")) {
+        float gap = ImGui::GetStyle().ItemSpacing.x;
+        float w = (ImGui::GetContentRegionAvail().x - gap) / 2;
+        if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(w, 0))) weapons::FillAmmo();
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(v.status.c_str());
-        ImGui::PopStyleColor();
+        if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(w, 0))) weapons::FillMedkits();
+        if (!v.status.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(v.status.c_str());
+            ImGui::PopStyleColor();
+        }
     }
 }
 
@@ -1076,7 +1128,7 @@ void DrawFooter(float em) {
     const char* hint = "";
     if (g_capture >= 0) hint = "Press a key or mouse button to bind, Escape cancels";
     else if (g_page == kKeyboardPage && g_hovered_box >= 0) hint = "Right click or Delete clears the key";
-    else if (g_page == kCheatsPage) hint = "A weapon replaces the one not in hand, gold names are held";
+    else if (g_page == kCheatsPage) hint = "Click a heading to fold it, gold names are held";
     ImGui::TextUnformatted(Ui(hint, false).c_str());
     ImGui::PopStyleColor();
     float bw = em * 8;
