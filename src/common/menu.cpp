@@ -186,13 +186,19 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
 // ---- collapsible sections ----------------------------------------------------------------------------------
 // Each heading can be collapsed by clicking it, hiding every row until the next heading. State is tracked by
 // the heading's title in this map, so it survives panel closes/reopens during a session (a static map, one
-// entry per title). Default is expanded (the bool is zero-initialised when the entry is first looked up).
+// entry per title). Default is COLLAPSED — a new heading's entry is inserted with true, so the panel opens
+// with every cheat feature hidden behind its heading, keeping the page short and scannable.
 // Not reset on Defaults — collapse state is UI convenience, not a setting.
 std::map<std::string, bool> g_collapsed;
 
 // Draws a collapsible heading. Returns true if the section is expanded (rows below should be drawn), false
 // if collapsed (the caller skips them until the next heading). The whole heading is one full-width clickable
 // strip: hovering highlights it, clicking toggles collapse. A ▶ / ▼ triangle on the left shows the state.
+//
+// DEFAULT STATE: collapsed (feature hidden). On the very first frame a heading is drawn, g_collapsed gets
+// a new entry with `true` — so the panel opens with every cheat feature hidden behind its heading. The
+// user clicks the heading to reveal the rows under it; clicks again to hide them. This keeps the CHEATS
+// page short and scannable, and lets the user focus on one feature group at a time.
 //
 // The heading text size follows em, which is ImGui::GetFontSize() — already scaled by io.FontGlobalScale
 // (= InterfaceScale() = base * cheat_panel_size/100). So the heading grows/shrinks with panel size
@@ -201,7 +207,9 @@ bool Section(const char* title) {
     float em = ImGui::GetFontSize();
     ImGui::Dummy(ImVec2(0, em * 0.3f));
     std::string key(title);
-    bool& collapsed = g_collapsed[key];
+    // Default = true (collapsed). try_emplace inserts `true` on first sight of this heading, so a fresh
+    // session opens with every section folded. The reference lets the click toggle below write through it.
+    bool& collapsed = g_collapsed.try_emplace(key, true).first->second;
 
     ImGui::PushID(title);
     ImVec2 start = ImGui::GetCursorScreenPos();
@@ -445,8 +453,9 @@ constexpr Row kGeneralRows[] = {
 // The cheats page. The ESP rows have their own ESP heading (below PLAYER, above CROSSHAIR) so the
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
-// Every heading is collapsible — click it to toggle. The CHEAT UI section at the bottom offers overall
-// panel size, per-element button size and gap, and a one-press reset that returns all three to 100%.
+// Every heading is collapsible — click it to toggle. All headings start COLLAPSED (features hidden) and
+// the user clicks to reveal a section. The CHEAT UI section at the bottom offers overall panel size,
+// per-element button size and gap, and a one-press reset that returns all three to 100%.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
