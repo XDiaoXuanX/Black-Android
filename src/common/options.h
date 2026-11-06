@@ -157,12 +157,22 @@ struct Options {
     // cheat: tenths of a degree inside which the aimbot does not turn. Larger leaves the crosshair freer so it
     // can be slid off one enemy onto the next; smaller keeps it locked on the current one. 15 = 1.5 degrees.
     uint32_t aimbot_deadzone = 15;
-    // cheat panel UI: overall panel size, percent of the natural fit. 100% is the historical layout; <100%
-    // makes the whole panel (font, buttons, headings, window footprint) smaller and more compact; >100%
-    // makes it larger. Values above 100% may overflow the screen on phones (the user chose the size, they
-    // can lower it back with the same row, or use the RESET CHEAT UI action in the same section). Edited in
-    // the CHEATS page's CHEAT UI section, applied live, persisted to settings.
+    // cheat panel UI:
+    //
+    //   cheat_panel_size    50..300  — overall scale of the whole panel (font, buttons, headings, window
+    //                                 footprint). 100% is the historical layout; <100% makes the panel
+    //                                 smaller and more compact; >100% makes it larger. Values above 100%
+    //                                 may overflow the screen on phones (the user chose the size, they
+    //                                 can lower it back). This row is the master size control; the two
+    //                                 per-element rows below fine-tune the layout inside it.
+    //   cheat_button_size   50..1000 — side of the "<" / ">" buttons (100 = standard frame height)
+    //   cheat_button_gap     0..1000 — gap between a button and the value text (100 = standard spacing)
+    //
+    // All three are edited in the CHEATS page's CHEAT UI section; a RESET CHEAT UI row returns all three
+    // to 100% in one press. Applied live (no restart), persisted to settings like every other option.
     uint32_t cheat_panel_size = 100;
+    uint32_t cheat_button_size = 100;
+    uint32_t cheat_button_gap = 100;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
