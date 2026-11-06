@@ -157,29 +157,12 @@ struct Options {
     // cheat: tenths of a degree inside which the aimbot does not turn. Larger leaves the crosshair freer so it
     // can be slid off one enemy onto the next; smaller keeps it locked on the current one. 15 = 1.5 degrees.
     uint32_t aimbot_deadzone = 15;
-    // cheat panel UI: overall panel size, and per-element size and gap on every cheat option row.
-    //
-    //   cheat_panel_size    50..300  — overall scale of the whole panel (font, buttons, headings, window
-    //                                 footprint). 100% is the historical layout; <100% makes the panel
-    //                                 smaller and more compact; >100% makes it larger. Values above 100%
-    //                                 may overflow the screen on phones (the user chose the size, they
-    //                                 can lower it back). This row is the master size control; the four
-    //                                 per-element rows below fine-tune the layout inside it.
-    //   cheat_button_size   50..1000 — side of the "<" / ">" buttons (100 = standard frame height)
-    //   cheat_button_gap     0..1000 — gap between a button and the value text (100 = standard spacing)
-    //   cheat_label_size    50..1000 — size of the feature name text ("INFINITE AMMO", "GOD MODE", …)
-    //   cheat_heading_size  50..1000 — size of the section heading text ("WEAPONS", "ESP", …)
-    //
-    // The row's height grows to fit the largest of (standard frame height, button size, label size), so
-    // 150% buttons do not spill into the next row. The value text (ON/OFF, 8X, 125%, …) stays at the
-    // standard font size — only the label and the heading scale. All five are edited in the CHEATS page's
-    // CHEAT UI section; a RESET CHEAT UI row returns all five to 100% in one press. Applied live (no
-    // restart), persisted to settings like every other option.
+    // cheat panel UI: overall panel size, percent of the natural fit. 100% is the historical layout; <100%
+    // makes the whole panel (font, buttons, headings, window footprint) smaller and more compact; >100%
+    // makes it larger. Values above 100% may overflow the screen on phones (the user chose the size, they
+    // can lower it back with the same row, or use the RESET CHEAT UI action in the same section). Edited in
+    // the CHEATS page's CHEAT UI section, applied live, persisted to settings.
     uint32_t cheat_panel_size = 100;
-    uint32_t cheat_button_size = 100;
-    uint32_t cheat_button_gap = 100;
-    uint32_t cheat_label_size = 100;
-    uint32_t cheat_heading_size = 100;
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
