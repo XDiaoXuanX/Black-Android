@@ -468,8 +468,9 @@ constexpr Row kGeneralRows[] = {
 // wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
 // named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
 // Every heading is collapsible — click it to toggle. All headings start COLLAPSED (features hidden) and
-// the user clicks to reveal a section. The CHEAT UI section at the bottom offers overall panel size,
-// per-element button size and gap, and a one-press reset that returns all three to 100%.
+// the user clicks to reveal a section. The DEBUG row that used to live here (Panel Size, Button Size,
+// Button Gap, Reset) is now its own tab page (see kDebugRows below) — the CHEATS page itself only
+// carries the toggles, so its Defaults action resets only toggles.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -508,11 +509,17 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
-    {Kind::Heading, -1, "CHEAT UI"},
-    {Kind::Value, kCheatPanelSize, "CHEAT PANEL SIZE"},
-    {Kind::Value, kCheatButtonSize, "CHEAT BUTTON SIZE"},
-    {Kind::Value, kCheatButtonGap, "CHEAT BUTTON GAP"},
-    {Kind::Value, kCheatReset, "RESET CHEAT UI"},
+};
+
+// DEBUG page: the former "CHEAT UI" section, now a standalone tab. No section heading — the four rows
+// sit directly on the page so opening the tab shows them at once (a collapsed heading would hide the
+// content behind an extra click, pointless for a page with only four rows). Labels use "PANEL" instead
+// of "CHEAT" so they read as sizing the panel itself, not a specific cheat.
+constexpr Row kDebugRows[] = {
+    {Kind::Value, kCheatPanelSize, "PANEL UI SIZE"},
+    {Kind::Value, kCheatButtonSize, "PANEL BUTTON SIZE"},
+    {Kind::Value, kCheatButtonGap, "PANEL BUTTON GAP"},
+    {Kind::Value, kCheatReset, "RESET PANEL UI"},
 };
 
 struct Credit {
@@ -946,6 +953,7 @@ constexpr int kGeneralPage = 2;
 constexpr int kKeyboardPage = 3;
 constexpr int kCheatsPage = 4;
 constexpr int kCreditsPage = 5;
+constexpr int kDebugPage = 6;
 
 void RestoreDefaults(int page) {
     game::Options& o = game::Opt();
@@ -982,6 +990,14 @@ void RestoreDefaults(int page) {
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
+        Changed();
+        return;
+    }
+    if (page == kDebugPage) {
+        // DEBUG page defaults: reset only the three cheat-UI size settings. The panel position is reset
+        // by the footer "Defaults" button (Defaults() in this file), not here — position is a UI detail,
+        // not a setting.
+        game::Options none;
         o.cheat_panel_size = none.cheat_panel_size;
         o.cheat_button_size = none.cheat_button_size;
         o.cheat_button_gap = none.cheat_button_gap;
@@ -1128,7 +1144,8 @@ void KeyRow(const Row& r) {
 }
 
 // Draws a list of rows. Rows after a collapsed heading are skipped until the next heading. The first row
-// starts expanded if there is no heading above it (e.g. the CONTROLLER block, which has no heading).
+// starts expanded if there is no heading above it (e.g. the CONTROLLER block, or the DEBUG page, which
+// has no heading — its rows show directly).
 void DrawList(const Row* list, size_t count) {
     bool expanded = true;
     for (size_t i = 0; i < count; i++) {
@@ -1254,9 +1271,9 @@ void DrawTitle(const char* caption) {
 // Row of tab buttons below the MENU title. Each tab switches g_page to its target page, and the content
 // area below (DrawRows(g_page) + DrawWeapons for the cheats page) then renders the rows of that page. The
 // active tab is filled with the heading colour (gold) and its text uses the panel background colour, so it
-// stands out as "currently on this page". Six tabs, evenly spaced across the row, sized from the available
-// width. Clicking a tab also cancels any pending key-bind capture (g_capture = -1) so a stray press of a
-// key the user meant for the previous page doesn't get bound to the new one.
+// stands out as "currently on this page". Seven tabs, evenly spaced across the row, sized from the
+// available width. Clicking a tab also cancels any pending key-bind capture (g_capture = -1) so a stray
+// press of a key the user meant for the previous page doesn't get bound to the new one.
 void DrawTabs() {
     struct Tab { const char* label; int page; };
     static const Tab kTabs[] = {
@@ -1265,12 +1282,13 @@ void DrawTabs() {
         {"GENERAL",  2},
         {"KEYBOARD", 3},
         {"CHEATS",   4},
+        {"DEBUG",    6},
         {"CREDITS",  5},
     };
     float em = ImGui::GetFontSize();
     const ImGuiStyle& style = ImGui::GetStyle();
     int n = int(std::size(kTabs));
-    float gap = em * 0.35f;
+    float gap = em * 0.25f;
     float total_w = ImGui::GetContentRegionAvail().x;
     float tab_w = (total_w - gap * (n - 1)) / n;
     float tab_h = ImGui::GetFrameHeight();
@@ -1476,6 +1494,7 @@ void PaceFrame() {
 const rows::Row* rows::Page(int page, size_t* count) {
     if (page == kKeyboardPage) { *count = InputRows().size(); return InputRows().data(); }
     if (page == kCheatsPage) { *count = std::size(kCheatRows); return kCheatRows; }
+    if (page == kDebugPage) { *count = std::size(kDebugRows); return kDebugRows; }
     if (page == kCreditsPage) { *count = CreditRows().size(); return CreditRows().data(); }
     if (page == kTouchPage) { *count = std::size(kTouchRows); return kTouchRows; }
     if (page == kGeneralPage) { *count = std::size(kGeneralRows); return kGeneralRows; }
@@ -1500,7 +1519,7 @@ std::string rows::Value(const Row& row, int step) {
 }
 
 void rows::Defaults(int page) { RestoreDefaults(page); }
-bool rows::Restorable(int page) { return page == kKeyboardPage || page == kCheatsPage; }
+bool rows::Restorable(int page) { return page == kKeyboardPage || page == kCheatsPage || page == kDebugPage; }
 
 bool rows::Enabled(const Row& row) {
     if (row.kind != Kind::Value) return true;
