@@ -183,6 +183,20 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
     return lo + inc * StepIndex((std::clamp(value, lo, hi) - lo) / inc, step, count);
 }
 
+// ---- panel drag-anywhere ----------------------------------------------------------------------------------
+// The whole panel window (not just the title) is a drag surface for repositioning it. Detection happens at
+// the END of the frame, after all widgets are drawn, so ImGui's hover/active state is already resolved:
+//   - click that landed on a widget  → that widget became active → we do NOT start a drag
+//   - click that landed on empty     → no widget active/hovered  → start a drag
+//   - once dragging                  → move the window by the mouse delta from the drag origin
+//   - release                        → write the final position to game::Opt().panel_pos_* and persist
+// Because the check runs after content is drawn, the child scroll area's drag-to-scroll (DragScroll) still
+// wins inside the child: the parent's IsWindowHovered() returns false while a child is under the mouse.
+static bool g_panel_dragging = false;
+static ImVec2 g_panel_drag_origin;    // window position at drag start
+static ImVec2 g_panel_mouse_origin;   // mouse position at drag start
+static bool g_panel_drag_moved = false;  // did the mouse actually move (avoid a pointless save on a tap)
+
 // ---- collapsible sections ----------------------------------------------------------------------------------
 // Each heading can be collapsed by clicking it, hiding every row until the next heading. State is tracked by
 // the heading's title in this map, so it survives panel closes/reopens during a session (a static map, one
@@ -1228,46 +1242,16 @@ void Defaults() {
     o.panel_pos_y = INT32_MIN;
 }
 
+// The title is just a label now. Drag-anywhere (below) handles repositioning: clicking the title text
+// doesn't hit any widget, so it starts a panel drag just like clicking the padding does.
 void DrawTitle(const char* caption) {
     std::string title = Ui(caption);
-    const ImGuiStyle& style = ImGui::GetStyle();
-    // The title bar doubles as the drag handle: hold the mouse on the "CHEATS" strip and move it to drag
-    // the whole panel anywhere. The new position is written to game::Opt().panel_pos_x/y (so it survives
-    // the panel closing/reopening and the session) and clamped to leave at least ~4 ems of the panel on
-    // screen at each edge — enough to grab the title bar again. The footer "Defaults" button resets both
-    // back to INT32_MIN to recenter.
-    ImVec2 row_start = ImGui::GetCursorScreenPos();
-    float row_w = ImGui::GetContentRegionAvail().x;
-    float row_h = ImGui::GetTextLineHeight() + style.FramePadding.y * 2;
-    ImGui::InvisibleButton("##title_drag", ImVec2(row_w, row_h));
-    if (ImGui::IsItemActive()) {
-        ImVec2 d = ImGui::GetIO().MouseDelta;
-        ImVec2 wp = ImGui::GetWindowPos();
-        ImVec2 np(wp.x + d.x, wp.y + d.y);
-        const ImGuiViewport* vp = ImGui::GetMainViewport();
-        float em = ImGui::GetFontSize();
-        float min_vis = em * 4;
-        ImVec2 ws = ImGui::GetWindowSize();
-        np.x = std::clamp(np.x, -ws.x + min_vis, vp->WorkSize.x - min_vis);
-        np.y = std::clamp(np.y, -ws.y + min_vis, vp->WorkSize.y - min_vis);
-        ImGui::SetWindowPos(np);
-        game::Options& o = game::Opt();
-        o.panel_pos_x = int32_t(np.x);
-        o.panel_pos_y = int32_t(np.y);
-    }
-    if (ImGui::IsItemDeactivated()) {
-        // Drag ended: persist the new position to the settings file (the incremental writes above are only
-        // in memory; Changed() → Save() serializes them). The audio-output side effect of Changed() is a
-        // no-op when the audio output hasn't been touched — it re-sets the same value.
-        Changed();
-    }
-    // Draw the title text on top of the invisible button, centered in the row
-    float title_pad = (row_w - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
-    ImGui::SetCursorScreenPos(ImVec2(row_start.x + std::max(title_pad, 0.0f), row_start.y + style.FramePadding.y));
+    float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(title_pad, 0.0f));
     ImGui::TextUnformatted(title.c_str());
 }
 
-// Row of tab buttons below the CHEATS title. Each tab switches g_page to its target page, and the content
+// Row of tab buttons below the MENU title. Each tab switches g_page to its target page, and the content
 // area below (DrawRows(g_page) + DrawWeapons for the cheats page) then renders the rows of that page. The
 // active tab is filled with the heading colour (gold) and its text uses the panel background colour, so it
 // stands out as "currently on this page". Six tabs, evenly spaced across the row, sized from the available
@@ -1317,7 +1301,7 @@ void DrawFooter(float em) {
     const char* hint = "";
     if (g_capture >= 0) hint = "Press a key or mouse button to bind, Escape cancels";
     else if (g_page == kKeyboardPage && g_hovered_box >= 0) hint = "Right click or Delete clears the key";
-    else if (g_page == kCheatsPage) hint = "Click a heading to fold it, gold names are held";
+    else if (g_page == kCheatsPage) hint = "Drag anywhere to move the panel";
     ImGui::TextUnformatted(Ui(hint, false).c_str());
     ImGui::PopStyleColor();
     float bw = em * 8;
@@ -1363,8 +1347,8 @@ void DrawPanel() {
     float em = ImGui::GetFontSize();
     ImVec2 win_size(em * 80, em * 50);
     // Position: saved value if the user has dragged the panel at least once, else the centered default.
-    // INT32_MIN in both fields is the "never dragged" sentinel. DrawTitle writes the current position here
-    // on every drag; the footer "Defaults" button resets it.
+    // INT32_MIN in both fields is the "never dragged" sentinel. Drag-anywhere (below) writes the current
+    // position here on every drag; the footer "Defaults" button resets it.
     ImVec2 center = vp->GetCenter();
     ImVec2 pos(center.x - win_size.x * 0.5f, center.y - win_size.y * 0.5f);
     if (game::Opt().panel_pos_x != INT32_MIN && game::Opt().panel_pos_y != INT32_MIN) {
@@ -1383,9 +1367,9 @@ void DrawPanel() {
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
                                         ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
-        DrawTitle("CHEATS");
+        DrawTitle("MENU");
         ImGui::Separator();
-        DrawTabs();  // <-- tab bar (GRAPHICS · TOUCH · GENERAL · KEYBOARD · CHEATS · CREDITS)
+        DrawTabs();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.8f);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
@@ -1398,6 +1382,41 @@ void DrawPanel() {
         ImGui::EndChild();
         ImGui::PopStyleVar(3);
         DrawFooter(em);
+
+        // ---- drag-anywhere ---------------------------------------------------------------------------
+        // Check at the END of the frame so ImGui's hover/active state has been resolved by the widgets
+        // above. If a widget (button, tab, heading, slider, child scroll area, …) was pressed this frame,
+        // it's now the active item — we do NOT start a panel drag so its click fires. If no widget is
+        // active and no child window is hovered, the click landed on empty parent space (title text,
+        // padding, gaps between tabs, footer margins, …) and we start dragging the whole panel.
+        if (!g_panel_dragging
+            && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+            && ImGui::IsWindowHovered()
+            && !ImGui::IsAnyItemActive()) {
+            g_panel_dragging = true;
+            g_panel_drag_origin = ImGui::GetWindowPos();
+            g_panel_mouse_origin = ImGui::GetIO().MousePos;
+            g_panel_drag_moved = false;
+        }
+        if (g_panel_dragging) {
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                g_panel_dragging = false;
+                if (g_panel_drag_moved) Changed();
+            } else {
+                ImVec2 mouse = ImGui::GetIO().MousePos;
+                ImVec2 d(mouse.x - g_panel_mouse_origin.x, mouse.y - g_panel_mouse_origin.y);
+                if (d.x != 0 || d.y != 0) g_panel_drag_moved = true;
+                ImVec2 np(g_panel_drag_origin.x + d.x, g_panel_drag_origin.y + d.y);
+                float min_vis = em * 4;
+                ImVec2 ws = ImGui::GetWindowSize();
+                np.x = std::clamp(np.x, -ws.x + min_vis, vp->WorkSize.x - min_vis);
+                np.y = std::clamp(np.y, -ws.y + min_vis, vp->WorkSize.y - min_vis);
+                ImGui::SetWindowPos(np);
+                game::Options& o = game::Opt();
+                o.panel_pos_x = int32_t(np.x);
+                o.panel_pos_y = int32_t(np.y);
+            }
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(6);
@@ -1507,6 +1526,7 @@ void ToggleMenu() {
     bool open = !MenuOpen();
     g_open.store(open, std::memory_order_relaxed);
     g_capture = -1;
+    g_panel_dragging = false;  // cancel any drag in progress when the panel opens/closes
     if (open) input::ReleaseCursor();
 }
 
