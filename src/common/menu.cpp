@@ -68,6 +68,16 @@ namespace {
 
 std::atomic<bool> g_open{false};
 
+// ---- language restart confirmation --------------------------------------------------------------
+// Set when the user steps the LANGUAGE row to a code that is not the language this process booted
+// with: the game only reads its language at boot, so a change needs a fresh process. The modal in
+// DrawLanguageRestartDialog offers Yes (Restart) — Save() then a SDL_EVENT_QUIT that the main loop
+// catches and quits from — or No (Cancel) — revert to the code stored here and Save() again.
+// Escape and closing the panel both mean Cancel.
+bool g_language_restart_open = false;
+std::string g_language_previous_code;   // the code before the step, restored on Cancel
+std::string g_language_pending_label;   // the new language's display name, shown in the modal
+
 constexpr ImVec4 kPanelBg{0.035f, 0.03f, 0.025f, 0.94f};
 constexpr ImVec4 kBorder{0.72f, 0.58f, 0.30f, 0.85f};
 constexpr ImVec4 kText{0.90f, 0.88f, 0.84f, 1.0f};
@@ -108,10 +118,6 @@ const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", 
                                       "INDONESIAN"};  // as game::kLanguages
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
 
-// RAPID FIRE levels the panel steps through. 1 = OFF, then 2X..8X, then doubling up to 512X, then the
-// INFINITE sentinel (999). hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire, so 999
-// makes the wait effectively zero → one projectile per frame (frame-rate continuous fire) for weapons
-// whose pacing is in the wait field. Values 2..8 keep the original meaningful multipliers.
 constexpr uint32_t kRapidFireLevels[] = {
     1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128, 256, 512, 999,
 };
@@ -120,7 +126,6 @@ const char* const kRapidFireNames[] = {
     "16X",  "32X",  "64X",  "128X", "256X", "512X", "INFINITE",
 };
 
-// the ESP display modes: bit 0 = line, bit 1 = health bar (2 bits, 4 combinations)
 const char* const kEspDisplayNames[] = {
     "OFF",             // 0
     "LINE",            // 1
@@ -144,7 +149,6 @@ constexpr EspPreset kEspPresets[] = {
 };
 constexpr size_t kEspPresetCount = sizeof(kEspPresets) / sizeof(kEspPresets[0]);
 
-// crosshair shapes; keep in sync with options.h's comment (crosshair_style 0..3)
 const char* const kCrosshairStyleNames[] = {"+ (CROSS)", "* (STAR)", "X (DIAGONAL)", "DOT"};
 
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
@@ -184,45 +188,18 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
 }
 
 // ---- panel drag-anywhere ----------------------------------------------------------------------------------
-// The whole panel window (not just the title) is a drag surface for repositioning it. Detection happens at
-// the END of the frame, after all widgets are drawn, so ImGui's hover/active state is already resolved:
-//   - click that landed on a widget  → that widget became active → we do NOT start a drag
-//   - click that landed on empty     → no widget active/hovered  → start a drag
-//   - once dragging                  → move the window by the mouse delta from the drag origin
-//   - release                        → write the final position to game::Opt().panel_pos_* and persist
-// Because the check runs after content is drawn, the child scroll area's drag-to-scroll (DragScroll) still
-// wins inside the child: the parent's IsWindowHovered() returns false while a child is under the mouse.
 static bool g_panel_dragging = false;
-static ImVec2 g_panel_drag_origin;    // window position at drag start
-static ImVec2 g_panel_mouse_origin;   // mouse position at drag start
-static bool g_panel_drag_moved = false;  // did the mouse actually move (avoid a pointless save on a tap)
+static ImVec2 g_panel_drag_origin;
+static ImVec2 g_panel_mouse_origin;
+static bool g_panel_drag_moved = false;
 
 // ---- collapsible sections ----------------------------------------------------------------------------------
-// Each heading can be collapsed by clicking it, hiding every row until the next heading. State is tracked by
-// the heading's title in this map, so it survives panel closes/reopens during a session (a static map, one
-// entry per title). Default is COLLAPSED — a new heading's entry is inserted with true, so the panel opens
-// with every cheat feature hidden behind its heading, keeping the page short and scannable.
-// Not reset on Defaults — collapse state is UI convenience, not a setting.
 std::map<std::string, bool> g_collapsed;
 
-// Draws a collapsible heading. Returns true if the section is expanded (rows below should be drawn), false
-// if collapsed (the caller skips them until the next heading). The whole heading is one full-width clickable
-// strip: hovering highlights it, clicking toggles collapse. A ▶ / ▼ triangle on the left shows the state.
-//
-// DEFAULT STATE: collapsed (feature hidden). On the very first frame a heading is drawn, g_collapsed gets
-// a new entry with `true` — so the panel opens with every cheat feature hidden behind its heading. The
-// user clicks the heading to reveal the rows under it; clicks again to hide them. This keeps the CHEATS
-// page short and scannable, and lets the user focus on one feature group at a time.
-//
-// The heading text size follows em, which is ImGui::GetFontSize() — already scaled by io.FontGlobalScale
-// (= InterfaceScale() = base * cheat_panel_size/100). So the heading grows/shrinks with panel size
-// automatically; no per-element setting needed.
 bool Section(const char* title) {
     float em = ImGui::GetFontSize();
     ImGui::Dummy(ImVec2(0, em * 0.3f));
     std::string key(title);
-    // Default = true (collapsed). try_emplace inserts `true` on first sight of this heading, so a fresh
-    // session opens with every section folded. The reference lets the click toggle below write through it.
     bool& collapsed = g_collapsed.try_emplace(key, true).first->second;
 
     ImGui::PushID(title);
@@ -234,24 +211,20 @@ bool Section(const char* title) {
         ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                                                    ImGui::GetColorU32(ImGuiCol_Header));
     }
-    // triangle + title drawn directly on the window draw list
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImU32 colour = ImGui::GetColorU32(kHeading);
     float cx = start.x + em * 0.6f;
     float cy = start.y + height * 0.5f;
     float sz = em * 0.35f;
     if (collapsed) {
-        // ▶ right-pointing: section is closed
         draw->AddTriangleFilled(ImVec2(cx - sz * 0.5f, cy - sz), ImVec2(cx - sz * 0.5f, cy + sz),
                                  ImVec2(cx + sz * 0.7f, cy), colour);
     } else {
-        // ▼ down-pointing: section is open
         draw->AddTriangleFilled(ImVec2(cx - sz, cy - sz * 0.5f), ImVec2(cx + sz, cy - sz * 0.5f),
                                  ImVec2(cx, cy + sz * 0.7f), colour);
     }
     float text_y = start.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
     draw->AddText(ImVec2(start.x + em * 1.4f, text_y), colour, Ui(title).c_str());
-    // restore the layout cursor past the heading row so the separator lands under it
     ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + height));
     ImGui::PopID();
 
@@ -301,19 +274,6 @@ void FillItem() {
                                               ImGui::GetColorU32(ImGuiCol_Header));
 }
 
-// Each option row: label on the left, "<" button, value text, ">" button on the right. Both buttons toggle
-// a boolean row (INFINITE AMMO, GOD MODE, …) — a boolean row ignores the step sign (Flip flips on any
-// nonzero step) — and step a multi-value row (RAPID FIRE, GAME SPEED, ESP COLOR, AIMBOT TARGET, …) by -1
-// / +1.
-//
-// Button size and gap come from game::Opt():
-//   cheat_button_size  50..1000 (% of the standard frame height) — button side in pixels
-//   cheat_button_gap    0..1000 (% of the standard ItemSpacing) — distance between button and value text
-// Both are multiplied on top of em/base_h, which are already scaled by cheat_panel_size (via
-// io.FontGlobalScale / InterfaceScale), so raising the overall panel size raises everything together.
-// A safety cap keeps the two buttons at or under half the row width, so extreme settings can't overflow.
-// Label and value text stay at em's standard size — only the buttons and their spacing get the extra
-// per-element multipliers.
 int OptionRow(const char* label, const char* value) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const game::Options& opts = game::Opt();
@@ -327,12 +287,8 @@ int OptionRow(const char* label, const char* value) {
     box.row_w = ImGui::GetContentRegionAvail().x;
     box.value_w = em * kValueEms;
 
-    // btn_size follows base_h (which follows em → follows panel_size) times the per-element setting. Capped
-    // at 1/4 row width so two buttons never take more than half the row — the label and value still fit.
     float btn_size_raw = base_h * size_pct;
     float btn_size = std::min(btn_size_raw, box.row_w * 0.25f);
-    // gap follows ItemSpacing (which follows font) times the per-element setting. No cap needed; a huge gap
-    // pushes the buttons towards the edges but doesn't overflow vertically.
     float gap = style.ItemSpacing.x * gap_pct;
 
     box.row_h = std::max(base_h, btn_size);
@@ -340,7 +296,6 @@ int OptionRow(const char* label, const char* value) {
     box.row_x = ImGui::GetCursorPosX();
     box.row_y = ImGui::GetCursorPosY();
 
-    // Center text and buttons vertically when btn_size exceeds the standard frame height.
     float text_y = box.row_y + (box.row_h - base_h) * 0.5f;
     float btn_y = box.row_y + (box.row_h - btn_size) * 0.5f;
 
@@ -359,18 +314,15 @@ int OptionRow(const char* label, const char* value) {
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav | ImGuiItemFlags_ButtonRepeat, true);
     float block_x = box.row_x + box.row_w - box.block_w;
 
-    // "<" — decrement / toggle
     ImGui::SetCursorPos(ImVec2(block_x, btn_y));
     if (ImGui::Button("<", ImVec2(btn_size, btn_size))) step = -1;
 
-    // value text — centred horizontally in its column, at standard font size
     float value_x = block_x + btn_size + gap;
     float pad = (box.value_w - ImGui::CalcTextSize(value).x) * 0.5f;
     ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), text_y));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(value);
 
-    // ">" — increment / toggle
     float btn2_x = value_x + box.value_w + gap;
     ImGui::SetCursorPos(ImVec2(btn2_x, btn_y));
     if (ImGui::Button(">", ImVec2(btn_size, btn_size))) step = 1;
@@ -387,6 +339,19 @@ void Flip(bool& on, int step) { if (step) on = !on; }
 void Changed() {
     audio::SetOutputMode(game::Opt().audio_output);
     Save();
+}
+
+// Called from the modal's Yes (Restart) button. The language is already saved (Changed() runs when
+// the row steps), this just makes sure everything else is committed too before the process exits.
+// The main loop owns the actual SDL_Quit; pushing SDL_EVENT_QUIT is the cleanest cross-platform
+// request. On Android the activity finishes, the launcher can relaunch; on desktop the process ends
+// and a relaunch picks the new language up at boot.
+void RestartForLanguage() {
+    Changed();
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&ev);
 }
 
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity,
@@ -464,13 +429,6 @@ constexpr Row kGeneralRows[] = {
     {Kind::Value, kAutoUpdate, "STARTUP UPDATE CHECK"},
 };
 
-// The cheats page. The ESP rows have their own ESP heading (below PLAYER, above CROSSHAIR) so the
-// wall-hack controls sit together instead of being mixed into the player cheats. The master toggle is
-// named ESP MODE, the sub-selector (line / health bar) is ESP MODE TARGET, and the colour rows follow.
-// Every heading is collapsible — click it to toggle. All headings start COLLAPSED (features hidden) and
-// the user clicks to reveal a section. The DEBUG row that used to live here (Panel Size, Button Size,
-// Button Gap, Reset) is now its own tab page (see kDebugRows below) — the CHEATS page itself only
-// carries the toggles, so its Defaults action resets only toggles.
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
@@ -511,10 +469,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kUnlockBlackOps, "UNLOCK BLACK OPS"},
 };
 
-// DEBUG page: the former "CHEAT UI" section, now a standalone tab. No section heading — the four rows
-// sit directly on the page so opening the tab shows them at once (a collapsed heading would hide the
-// content behind an extra click, pointless for a page with only four rows). Labels use "PANEL" instead
-// of "CHEAT" so they read as sizing the panel itself, not a specific cheat.
 constexpr Row kDebugRows[] = {
     {Kind::Value, kCheatPanelSize, "PANEL UI SIZE"},
     {Kind::Value, kCheatButtonSize, "PANEL BUTTON SIZE"},
@@ -808,10 +762,6 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
                           o.cheat_button_gap);
             return true;
         case kCheatReset:
-            // Reset ALL THREE cheat-UI settings back to their defaults in one press. Panel Size is
-            // included, not just the per-element size/gap — a user who set Panel Size=200, Button
-            // Size=150, Button Gap=200 in a session and wants everything back to stock gets it here
-            // without touching the three rows individually.
             if (step) {
                 o.cheat_panel_size = 100;
                 o.cheat_button_size = 100;
@@ -912,9 +862,20 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             int i = 0;
             while (i < count - 1 && o.language != game::kLanguages[i]) i++;
             if (step) {
+                int before = i;
                 do i = StepIndex(i, step, count);
                 while (!game::LanguageAvailable(game::kLanguages[i]));
-                o.language = game::kLanguages[i];
+                if (i != before) {
+                    std::string previous = o.language;
+                    o.language = game::kLanguages[i];
+                    // The game reads its language at boot, so any change to a code other than the one this
+                    // process started with needs a fresh process. Ask the user; the modal offers Yes / No.
+                    if (o.language != game::BootLanguage()) {
+                        g_language_previous_code = previous;
+                        g_language_pending_label = kLanguageNames[i];
+                        g_language_restart_open = true;
+                    }
+                }
             }
             const char* format = o.language == game::BootLanguage() ? "%s" : "%s (RESTART)";
             std::snprintf(text, sizeof(text), format, kLanguageNames[i]);
@@ -994,9 +955,6 @@ void RestoreDefaults(int page) {
         return;
     }
     if (page == kDebugPage) {
-        // DEBUG page defaults: reset only the three cheat-UI size settings. The panel position is reset
-        // by the footer "Defaults" button (Defaults() in this file), not here — position is a UI detail,
-        // not a setting.
         game::Options none;
         o.cheat_panel_size = none.cheat_panel_size;
         o.cheat_button_size = none.cheat_button_size;
@@ -1143,9 +1101,6 @@ void KeyRow(const Row& r) {
     g_capture_armed = false;
 }
 
-// Draws a list of rows. Rows after a collapsed heading are skipped until the next heading. The first row
-// starts expanded if there is no heading above it (e.g. the CONTROLLER block, or the DEBUG page, which
-// has no heading — its rows show directly).
 void DrawList(const Row* list, size_t count) {
     bool expanded = true;
     for (size_t i = 0; i < count; i++) {
@@ -1164,8 +1119,6 @@ void DrawRows(int page) {
     const Row* list = rows::Page(page, &count);
     DrawList(list, count);
     if (page != kTouchPage) return;
-    // The CONTROLLER block has no heading of its own: reuse the TOUCH heading's state so collapsing TOUCH
-    // also collapses the controller rows below it.
     if (Section("CONTROLLER")) DrawList(kControllerRows, std::size(kControllerRows));
 }
 
@@ -1230,10 +1183,6 @@ void DrawWeapons() {
             }
         }
     }
-    // Each fill action has its own full-width button on its own row so FILL AMMUNITION sits exactly like
-    // FILL MEDKITS and FILL GRENADES — same width, same section (SUPPLIES), same visual weight. The status
-    // line below is shared: the last DoFill* call wrote it (View::status), so the button row stays the same
-    // height and the message line doesn't jump between actions.
     if (Section("SUPPLIES")) {
         if (ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(-1, 0))) weapons::FillAmmo();
         if (ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(-1, 0))) weapons::FillMedkits();
@@ -1247,20 +1196,77 @@ void DrawWeapons() {
     }
 }
 
+// The confirmation shown after the user steps LANGUAGE to a code other than the boot language. The
+// row's "(RESTART)" suffix tells the user a restart is pending; this modal gives them the choice.
+//   Yes (Restart) — Save() is a no-op if nothing else changed, then SDL_EVENT_QUIT lets the main loop
+//                    quit cleanly. On Android the activity finishes, the launcher can relaunch; on
+//                    desktop the process ends and a relaunch picks the new language up at boot.
+//   No (Cancel)  — revert to g_language_previous_code and Save() again, so a relaunch would boot
+//                    with the old language (the change never took effect in the running game either).
+//   Escape       — same as Cancel.
+// Closing the panel while the modal is open also cancels; see ToggleMenu().
+void DrawLanguageRestartDialog(float em) {
+    if (g_language_restart_open && !ImGui::IsPopupOpen("##language_restart")) {
+        ImGui::OpenPopup("##language_restart");
+    }
+    if (!ImGui::BeginPopupModal("##language_restart", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        return;
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+    ImGui::TextUnformatted(Ui("RESTART REQUIRED").c_str());
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::TextWrapped("%s", Ui("The game must restart to apply the new language.").c_str());
+    ImGui::Spacing();
+    {
+        char line[128];
+        std::snprintf(line, sizeof(line), "%s: %s", Ui("NEW LANGUAGE").c_str(), g_language_pending_label.c_str());
+        ImGui::TextUnformatted(line);
+    }
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    float bw = em * 11.0f;
+    float total = bw * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetCursorPosX(std::max((ImGui::GetWindowWidth() - total) * 0.5f, 0.0f));
+
+    auto cancel = [] {
+        g_language_restart_open = false;
+        game::Opt().language = g_language_previous_code;
+        Changed();
+    };
+
+    if (ImGui::Button(Ui("Yes (Restart)").c_str(), ImVec2(bw, 0))) {
+        g_language_restart_open = false;
+        ImGui::CloseCurrentPopup();
+        RestartForLanguage();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Ui("No (Cancel)").c_str(), ImVec2(bw, 0))) {
+        cancel();
+        ImGui::CloseCurrentPopup();
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        cancel();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void Defaults() {
     g_capture = -1;
     RestoreDefaults(g_page);
-    // Reset the panel position back to the centered default in the same press. A user who dragged it
-    // off-screen or into an awkward corner gets it back with one press. RestoreDefaults doesn't touch
-    // the position (it's a UI detail, not a setting), so the reset lives here in the footer button that
-    // already means "put the whole UI back to defaults".
     game::Options& o = game::Opt();
     o.panel_pos_x = INT32_MIN;
     o.panel_pos_y = INT32_MIN;
 }
 
-// The title is just a label now. Drag-anywhere (below) handles repositioning: clicking the title text
-// doesn't hit any widget, so it starts a panel drag just like clicking the padding does.
 void DrawTitle(const char* caption) {
     std::string title = Ui(caption);
     float title_pad = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title.c_str()).x) * 0.5f;
@@ -1268,12 +1274,6 @@ void DrawTitle(const char* caption) {
     ImGui::TextUnformatted(title.c_str());
 }
 
-// Row of tab buttons below the MENU title. Each tab switches g_page to its target page, and the content
-// area below (DrawRows(g_page) + DrawWeapons for the cheats page) then renders the rows of that page. The
-// active tab is filled with the heading colour (gold) and its text uses the panel background colour, so it
-// stands out as "currently on this page". Seven tabs, evenly spaced across the row, sized from the
-// available width. Clicking a tab also cancels any pending key-bind capture (g_capture = -1) so a stray
-// press of a key the user meant for the previous page doesn't get bound to the new one.
 void DrawTabs() {
     struct Tab { const char* label; int page; };
     static const Tab kTabs[] = {
@@ -1305,7 +1305,7 @@ void DrawTabs() {
         }
         if (ImGui::Button(kTabs[i].label, ImVec2(tab_w, tab_h))) {
             g_page = kTabs[i].page;
-            g_capture = -1;  // cancel any pending key capture on page switch
+            g_capture = -1;
         }
         if (active) ImGui::PopStyleColor(4);
     }
@@ -1364,9 +1364,6 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImVec2 win_size(em * 80, em * 50);
-    // Position: saved value if the user has dragged the panel at least once, else the centered default.
-    // INT32_MIN in both fields is the "never dragged" sentinel. Drag-anywhere (below) writes the current
-    // position here on every drag; the footer "Defaults" button resets it.
     ImVec2 center = vp->GetCenter();
     ImVec2 pos(center.x - win_size.x * 0.5f, center.y - win_size.y * 0.5f);
     if (game::Opt().panel_pos_x != INT32_MIN && game::Opt().panel_pos_y != INT32_MIN) {
@@ -1401,12 +1398,6 @@ void DrawPanel() {
         ImGui::PopStyleVar(3);
         DrawFooter(em);
 
-        // ---- drag-anywhere ---------------------------------------------------------------------------
-        // Check at the END of the frame so ImGui's hover/active state has been resolved by the widgets
-        // above. If a widget (button, tab, heading, slider, child scroll area, …) was pressed this frame,
-        // it's now the active item — we do NOT start a panel drag so its click fires. If no widget is
-        // active and no child window is hovered, the click landed on empty parent space (title text,
-        // padding, gaps between tabs, footer margins, …) and we start dragging the whole panel.
         if (!g_panel_dragging
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
             && ImGui::IsWindowHovered()
@@ -1435,6 +1426,8 @@ void DrawPanel() {
                 o.panel_pos_y = int32_t(np.y);
             }
         }
+
+        DrawLanguageRestartDialog(em);
     }
     ImGui::End();
     ImGui::PopStyleVar(6);
@@ -1472,9 +1465,6 @@ float InterfaceScale(ImGuiIO& io) {
     float fit_y = io.DisplaySize.y / (kPanelTallEms * font_base * kPanelMargin);
     float density = std::min(io.DisplaySize.x, io.DisplaySize.y) / 720.0f;
     float base = std::min({density, fit_x, fit_y});
-    // The master panel size: multiplies the whole font scale so the panel window and everything inside it
-    // grows or shrinks together. The floor keeps text readable at 50% on tiny screens, and the ceiling
-    // keeps 300% on huge displays from producing absurdly large text that overflows every buffer.
     float user = float(std::clamp(game::Opt().cheat_panel_size, 50u, 300u)) / 100.0f;
     return std::clamp(base * user, 0.5f, 4.0f);
 }
@@ -1545,7 +1535,15 @@ void ToggleMenu() {
     bool open = !MenuOpen();
     g_open.store(open, std::memory_order_relaxed);
     g_capture = -1;
-    g_panel_dragging = false;  // cancel any drag in progress when the panel opens/closes
+    g_panel_dragging = false;
+    // Closing the panel while the language-restart modal is open is treated as Cancel: the new
+    // language never applied to this process, and leaving "(RESTART)" on the row would be misleading.
+    // Reopen the panel and the LANGUAGE row is back on the language the process actually booted with.
+    if (!open && g_language_restart_open) {
+        g_language_restart_open = false;
+        game::Opt().language = g_language_previous_code;
+        Changed();
+    }
     if (open) input::ReleaseCursor();
 }
 
