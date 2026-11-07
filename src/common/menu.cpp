@@ -1267,6 +1267,50 @@ void DrawTitle(const char* caption) {
     ImGui::TextUnformatted(title.c_str());
 }
 
+// Row of tab buttons below the CHEATS title. Each tab switches g_page to its target page, and the content
+// area below (DrawRows(g_page) + DrawWeapons for the cheats page) then renders the rows of that page. The
+// active tab is filled with the heading colour (gold) and its text uses the panel background colour, so it
+// stands out as "currently on this page". Six tabs, evenly spaced across the row, sized from the available
+// width. Clicking a tab also cancels any pending key-bind capture (g_capture = -1) so a stray press of a
+// key the user meant for the previous page doesn't get bound to the new one.
+void DrawTabs() {
+    struct Tab { const char* label; int page; };
+    static const Tab kTabs[] = {
+        {"GRAPHICS", 0},
+        {"TOUCH",    1},
+        {"GENERAL",  2},
+        {"KEYBOARD", 3},
+        {"CHEATS",   4},
+        {"CREDITS",  5},
+    };
+    float em = ImGui::GetFontSize();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    int n = int(std::size(kTabs));
+    float gap = em * 0.35f;
+    float total_w = ImGui::GetContentRegionAvail().x;
+    float tab_w = (total_w - gap * (n - 1)) / n;
+    float tab_h = ImGui::GetFrameHeight();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, style.ItemSpacing.y));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, em * 0.3f);
+    for (int i = 0; i < n; i++) {
+        if (i) ImGui::SameLine();
+        bool active = (g_page == kTabs[i].page);
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, kHeading);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kHeading);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, kHeading);
+            ImGui::PushStyleColor(ImGuiCol_Text, kPanelBg);
+        }
+        if (ImGui::Button(kTabs[i].label, ImVec2(tab_w, tab_h))) {
+            g_page = kTabs[i].page;
+            g_capture = -1;  // cancel any pending key capture on page switch
+        }
+        if (active) ImGui::PopStyleColor(4);
+    }
+    ImGui::PopStyleVar(2);
+    ImGui::Separator();
+}
+
 void DrawFooter(float em) {
     ImGui::Separator();
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
@@ -1341,6 +1385,7 @@ void DrawPanel() {
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
         DrawTitle("CHEATS");
         ImGui::Separator();
+        DrawTabs();  // <-- tab bar (GRAPHICS · TOUCH · GENERAL · KEYBOARD · CHEATS · CREDITS)
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.8f);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.0f);
