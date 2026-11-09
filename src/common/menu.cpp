@@ -110,17 +110,8 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
                                       audio::kOutputSurround};
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
-                                      "INDONESIAN"};
+                                      "INDONESIAN"};  // as game::kLanguages
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
-
-// ---- SCOPE styles (COD 2 / COD 3 / Modern / PSO-1) ----------------------------------------------
-const char* const kScopeStyleNames[] = {
-    "OFF",
-    "COD 2 (CROSS)",
-    "COD 3 (MIL-DOT)",
-    "MODERN (THICK)",
-    "PSO-1 (RUSSIAN)",
-};
 
 constexpr uint32_t kRapidFireLevels[] = {
     1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128, 256, 512, 999,
@@ -359,12 +350,10 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread, kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
-             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspColor,
+             kCredit, kBloom, kFog, kAntiAliasing, kMsaa, kHdr, kEsp, kEspDisplay, kEspDistance, kEspColor,
              kEspRed, kEspGreen, kEspBlue, kCrosshair, kCrosshairStyle, kCrosshairSize, kCrosshairThickness,
              kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
              kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
-             kScopeStyle, kScopeAllWeapons, kScopeSize, kScopeThickness,
-             kScopeVignetteOpacity, kScopeColor, kScopeRed, kScopeGreen, kScopeBlue,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
              kCheatPanelSize, kCheatButtonSize, kCheatButtonGap, kCheatReset };
 
@@ -445,6 +434,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "ESP"},
     {Kind::Value, kEsp, "ESP MODE"},
     {Kind::Value, kEspDisplay, "ESP MODE TARGET"},
+    {Kind::Value, kEspDistance, "ESP DISTANCE"},
     {Kind::Value, kEspColor, "ESP COLOR"},
     {Kind::Value, kEspRed, "ESP RED"},
     {Kind::Value, kEspGreen, "ESP GREEN"},
@@ -464,16 +454,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},
     {Kind::Value, kAimbotPull, "AIMBOT PULL"},
     {Kind::Value, kAimbotDeadzone, "AIMBOT DEADZONE"},
-    {Kind::Heading, -1, "SCOPE"},
-    {Kind::Value, kScopeStyle, "SCOPE STYLE"},
-    {Kind::Value, kScopeAllWeapons, "SCOPE ALL WEAPONS"},
-    {Kind::Value, kScopeSize, "SCOPE SIZE"},
-    {Kind::Value, kScopeThickness, "SCOPE THICKNESS"},
-    {Kind::Value, kScopeVignetteOpacity, "SCOPE VIGNETTE"},
-    {Kind::Value, kScopeColor, "SCOPE COLOR"},
-    {Kind::Value, kScopeRed, "SCOPE RED"},
-    {Kind::Value, kScopeGreen, "SCOPE GREEN"},
-    {Kind::Value, kScopeBlue, "SCOPE BLUE"},
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -561,11 +541,11 @@ bool* ToggleFlag(Settings& s, int id) {
         case kOneHitKill: return &o.one_hit_kill;
         case kInfiniteGrenades: return &o.infinite_grenades;
         case kEsp: return &o.esp;
+        case kEspDistance: return &o.esp_distance;
         case kCrosshair: return &o.crosshair;
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kAimbot: return &o.aimbot;
-        case kScopeAllWeapons: return &o.scope_all_weapons;
         case kDynamicRes: return &o.dynamic_resolution;
         default: return nullptr;
     }
@@ -758,51 +738,6 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.aimbot_deadzone = uint32_t(StepRange(int(o.aimbot_deadzone), 0, 300, 1, step));
             std::snprintf(text, sizeof(text), "%.1f", o.aimbot_deadzone / 10.0f);
             return true;
-        case kScopeStyle:
-            if (step) o.scope_style = uint32_t(StepRange(int(o.scope_style), 0, 4, 1, step));
-            std::snprintf(text, sizeof(text), "%s", kScopeStyleNames[std::clamp(o.scope_style, 0u, 4u)]);
-            return true;
-        case kScopeSize:
-            if (step) o.scope_size = uint32_t(StepRange(int(o.scope_size), 10, 100, 5, step));
-            std::snprintf(text, sizeof(text), "%u%%", o.scope_size);
-            return true;
-        case kScopeThickness:
-            if (step) o.scope_thickness = uint32_t(StepRange(int(o.scope_thickness), 1, 10, 1, step));
-            std::snprintf(text, sizeof(text), "%u", o.scope_thickness);
-            return true;
-        case kScopeVignetteOpacity:
-            if (step) o.scope_vignette_opacity = uint32_t(StepRange(int(o.scope_vignette_opacity), 0, 100, 5, step));
-            std::snprintf(text, sizeof(text), "%u%%", o.scope_vignette_opacity);
-            return true;
-        case kScopeColor: {
-            uint32_t preset = std::clamp(o.scope_color, 0u, uint32_t(kEspPresetCount));
-            if (step) {
-                preset = uint32_t(StepIndex(int(preset), step, int(kEspPresetCount) + 1));
-                o.scope_color = preset;
-                if (preset < kEspPresetCount) {
-                    const EspPreset& p = kEspPresets[preset];
-                    o.scope_red = uint32_t(p.r * 255.0f + 0.5f);
-                    o.scope_green = uint32_t(p.g * 255.0f + 0.5f);
-                    o.scope_blue = uint32_t(p.b * 255.0f + 0.5f);
-                }
-            }
-            std::snprintf(text, sizeof(text), "%s",
-                          preset < kEspPresetCount ? kEspPresets[preset].name : "CUSTOM");
-            return true;
-        }
-        case kScopeRed:
-        case kScopeGreen:
-        case kScopeBlue: {
-            uint32_t& channel = id == kScopeRed ? o.scope_red
-                              : id == kScopeGreen ? o.scope_green
-                              : o.scope_blue;
-            if (step) {
-                channel = uint32_t(StepRange(int(channel), 0, 255, 1, step));
-                o.scope_color = uint32_t(kEspPresetCount);
-            }
-            std::snprintf(text, sizeof(text), "%u", channel);
-            return true;
-        }
         case kGameSpeed:
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
@@ -993,6 +928,7 @@ void RestoreDefaults(int page) {
         o.unlock_black_ops = none.unlock_black_ops;
         o.esp = none.esp;
         o.esp_display = none.esp_display;
+        o.esp_distance = none.esp_distance;
         o.esp_color = none.esp_color;
         o.esp_red = none.esp_red;
         o.esp_green = none.esp_green;
@@ -1010,15 +946,6 @@ void RestoreDefaults(int page) {
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
-        o.scope_style = none.scope_style;
-        o.scope_all_weapons = none.scope_all_weapons;
-        o.scope_size = none.scope_size;
-        o.scope_thickness = none.scope_thickness;
-        o.scope_vignette_opacity = none.scope_vignette_opacity;
-        o.scope_color = none.scope_color;
-        o.scope_red = none.scope_red;
-        o.scope_green = none.scope_green;
-        o.scope_blue = none.scope_blue;
         Changed();
         return;
     }
@@ -1060,6 +987,7 @@ void RestoreDefaults(int page) {
     o.unlock_black_ops = keep.unlock_black_ops;
     o.esp = keep.esp;
     o.esp_display = keep.esp_display;
+    o.esp_distance = keep.esp_distance;
     o.esp_color = keep.esp_color;
     o.esp_red = keep.esp_red;
     o.esp_green = keep.esp_green;
@@ -1077,15 +1005,6 @@ void RestoreDefaults(int page) {
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
-    o.scope_style = keep.scope_style;
-    o.scope_all_weapons = keep.scope_all_weapons;
-    o.scope_size = keep.scope_size;
-    o.scope_thickness = keep.scope_thickness;
-    o.scope_vignette_opacity = keep.scope_vignette_opacity;
-    o.scope_color = keep.scope_color;
-    o.scope_red = keep.scope_red;
-    o.scope_green = keep.scope_green;
-    o.scope_blue = keep.scope_blue;
     o.cheat_panel_size = keep.cheat_panel_size;
     o.cheat_button_size = keep.cheat_button_size;
     o.cheat_button_gap = keep.cheat_button_gap;
