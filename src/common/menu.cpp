@@ -543,7 +543,6 @@ bool* ToggleFlag(Settings& s, int id) {
         case kInvertMouse: return &o.invert_mouse;
         case kHoldAim: return &o.hold_aim;
         case kInfiniteAmmo: return &o.infinite_ammo;
-        case kRapidFireExtra: return &o.rapid_fire_extra;
         case kNoRecoil: return &o.no_recoil;
         case kNoBulletSpread: return &o.no_bullet_spread;
         case kGodMode: return &o.god_mode;
@@ -649,6 +648,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
     switch (id) {
         case kRapidFire: {
             int i = StepTable(kRapidFireLevels, o.rapid_fire, step);
+            std::snprintf(text, sizeof(text), "%s", kRapidFireNames[i]);
+            return true;
+        }
+        case kRapidFireExtra: {
+            int i = StepTable(kRapidFireLevels, o.rapid_fire_extra, step);
             std::snprintf(text, sizeof(text), "%s", kRapidFireNames[i]);
             return true;
         }
