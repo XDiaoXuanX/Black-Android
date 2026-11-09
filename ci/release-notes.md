@@ -4,7 +4,7 @@
 
 <p align="center">
   <code><b>[ B L A C K : A N D R O I D ]</b></code><br>
-  <code>REL-{{VERSION}} // STABLE BUILD</code>
+  <code>REL-{{VERSION}} // TESTING BUILD</code>
 </p>
 
 <p align="center">
