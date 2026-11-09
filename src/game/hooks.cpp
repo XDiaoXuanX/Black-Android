@@ -485,9 +485,6 @@ constexpr uint32_t kAnimClipFades = 0x88;
 constexpr uint32_t kFadeSize = 0x28;
 constexpr uint32_t kAnimClipFadeSlot = 0x1C8;  // the current fade
 constexpr uint32_t kFireLoopHash = 0x6D9D2AC0;
-// animation clip frame count (float): the total duration in frames, read by ReloadBlurHold and the
-// animation system. Scaled temporarily by the reload speed cheat (see sub_0017B130 below).
-constexpr uint32_t kAnimationFrames = 0x1C;
 
 static bool IsFireClip(const std::string& name) {
     static const char* fire[] = {"S_100", "S_110", "S_114", "S_130", "S_170", "S_176"};
@@ -504,42 +501,9 @@ X86_FUNC(sub_0017B130) {
     uint32_t from = R32(ac + kAnimFrom);
     uint32_t clip = R32(ac + kAnimClip);
     if (R32(ac + kAnimOwner) != Player() || !clip) return __imp__sub_0017B130(ctx, base);
-
-    // Reload speed: scale the animation clip's frame count for non-fire player animations.
-    // This shortens the animation duration, which speeds up reload (and other non-fire anims).
-    // Fire animations are excluded because their timing is controlled by kWeaponWait (rapid_fire
-    // / rapid_fire_extra); speeding them up would clear g_idle_early incorrectly and interrupt
-    // continuous fire. Scale factor for level N = 1/(1 + N*0.3):
-    //   level 1  ≈ 1.3x faster    level 5  = 2.5x faster    level 10 = 4.0x faster
-    float saved_frames = 0.0f;
-    bool scaled = false;
-    {
-        uint32_t reload_speed = std::min(game::Opt().reload_speed, 10u);
-        if (reload_speed > 0) {
-            uint32_t weapon_now = R32(R32(ac + kAnimOwner) + kPlayerWeapon);
-            bool firing_now = weapon_now && R32(weapon_now + kWeaponState) == 1;
-            if (!firing_now) {
-                bool is_fire = (R32(clip + kAnimClipHash) == kFireLoopHash)
-                            || IsFireClip(ReadCString(ac + kAnimName, 13));
-                if (!is_fire) {
-                    float frames = G<float>(clip + kAnimationFrames);
-                    if (frames > 0.001f) {
-                        saved_frames = frames;
-                        float scale = 1.0f / (1.0f + float(reload_speed) * 0.3f);
-                        G<float>(clip + kAnimationFrames) = frames * scale;
-                        scaled = true;
-                    }
-                }
-            }
-        }
-    }
-
     int16_t slot = G<int16_t>(clip + kAnimClipFadeSlot);
     uint32_t fade = clip + kAnimClipFades + slot * kFadeSize;
     __imp__sub_0017B130(ctx, base);
-
-    if (scaled) G<float>(clip + kAnimationFrames) = saved_frames;
-
     if (G<int16_t>(clip + kAnimClipFadeSlot) == slot || FrameShare() >= 1) return;
     uint32_t weapon = R32(R32(ac + kAnimOwner) + kPlayerWeapon);
     if (weapon && R32(weapon + kWeaponState) == 1) {
@@ -776,7 +740,7 @@ void DrawListRoom(X86Context&, uint8_t*) {
 bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
 
 // the blur holds for the animation's frames times the last frame's time: frames of the game's frame rate instead
-// (kAnimationFrames is declared above, near the animation controller constants)
+constexpr uint32_t kAnimationFrames = 0x1C;
 void ReloadBlurHold(X86Context& ctx, uint8_t*) {
     float frames = G<float>(ctx.ecx + kAnimationFrames);
     ctx.xmm[0].f[0] = frames * G<float>(kGameFrameTime);
