@@ -168,6 +168,7 @@ void CurrentScopeColour(float out[4]) {
     out[3] = 1.0f;
 }
 
+// clip space; false behind the camera
 bool Clip(const float p[3], float clip[4]) {
     float eye[4];
     for (int c = 0; c < 4; c++)
@@ -178,6 +179,7 @@ bool Clip(const float p[3], float clip[4]) {
     return clip[3] > kNear;
 }
 
+// screen position in viewport pixels; false behind the camera
 bool Project(const float p[3], float vx, float vy, float vw, float vh, float out[2]) {
     float clip[4];
     if (!Clip(p, clip)) return false;
@@ -186,6 +188,7 @@ bool Project(const float p[3], float vx, float vy, float vw, float vh, float out
     return true;
 }
 
+// Writes one segment (6 vertices, 2 triangles) to the vertex buffer at *v, and its 6 colours at *c.
 void WriteSegment(Vertex*& v, uint8_t*& c, float x0, float y0, float x1, float y1, float width,
                   const float colour[4]) {
     float dx = x1 - x0, dy = y1 - y0;
@@ -221,13 +224,13 @@ void DrawCrosshairSegments(Vertex*& v, uint8_t*& c, float cx, float cy, float un
     CurrentCrosshairColour(colour);
 
     switch (opts.crosshair_style) {
-        case 0:
+        case 0:  // + (cross)
             DrawArm(v, c, cx, cy, 1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, 0, -1, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, 0, 1, gap, size, thick, colour);
             break;
-        case 1:
+        case 1:  // * (star)
             DrawArm(v, c, cx, cy, 1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, 0, -1, gap, size, thick, colour);
@@ -237,13 +240,13 @@ void DrawCrosshairSegments(Vertex*& v, uint8_t*& c, float cx, float cy, float un
             DrawArm(v, c, cx, cy, kDiag, kDiag, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -kDiag, -kDiag, gap, size, thick, colour);
             break;
-        case 2:
+        case 2:  // X
             DrawArm(v, c, cx, cy, kDiag, -kDiag, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -kDiag, kDiag, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, kDiag, kDiag, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -kDiag, -kDiag, gap, size, thick, colour);
             break;
-        case 3: {
+        case 3: {  // DOT
             float s = std::max(thick * 0.5f, 1.0f * unit);
             WriteSegment(v, c, cx, cy - s, cx, cy + s, s * 2, colour);
             break;
@@ -362,7 +365,7 @@ void DrawScopeSegments(Vertex*& v, uint8_t*& c, float vx, float vy, float vw, fl
 
 // Combined overlay draw (scope + crosshair) in a single triangle batch.
 void DrawOverlays(X86Context& ctx, float unit) {
-    const game::Options& opts = Opt();
+    const game::Options& opts = game::Opt();
     bool scope_on = IsScoped(opts);
     bool crosshair_on = opts.crosshair && !scope_on;
     if (!scope_on && !crosshair_on) return;
@@ -434,9 +437,9 @@ void Aimbot(X86Context& ctx) {
     G<float>(c + kControllerPitch) += pitch * pull;
 }
 
+// Kept as a thin wrapper for backwards compatibility — DrawEsp calls DrawOverlays,
+// which handles both scope and crosshair. Direct calls to DrawCrosshair still work.
 void DrawCrosshair(X86Context& ctx, float unit) {
-    // Kept as a thin wrapper for backwards compatibility — DrawEsp calls DrawOverlays,
-    // which handles both scope and crosshair. Direct calls to DrawCrosshair still work.
     const game::Options& opts = Opt();
     if (!opts.crosshair || !R32(kWorld)) return;
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
@@ -469,6 +472,10 @@ void DrawEsp(X86Context& ctx, float unit) {
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
+    // the vertex buffer, its call offset, and the per-vertex colour array: 16 bytes (4 floats) for each of
+    // the kMaxVertices vertices. Colours are written per-vertex as vertices are emitted, so the health bar
+    // can use its own green/yellow/red palette while the line and the bar's background keep the user's
+    // ESP colour.
     static const uint32_t buffer = mem::AllocSystem(kMaxVertices * sizeof(Vertex), 16);
     static const uint32_t offset = mem::AllocSystem(8, 16);
     static const uint32_t colours = mem::AllocSystem(kMaxVertices * sizeof(float) * 4, 16);
@@ -480,6 +487,8 @@ void DrawEsp(X86Context& ctx, float unit) {
     uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
     float width = kThickness * unit;
     auto now = std::chrono::steady_clock::now();
+    // the display mode: bit 0 = line, bit 1 = health bar (mask to 2 bits so an old config with 4-7 still
+    // decodes to the same visible elements rather than to garbage)
     uint32_t display = opts.esp_display & 0x3;
     bool show_line = (display & 1) != 0;
     bool show_health = (display & 2) != 0;
@@ -494,6 +503,7 @@ void DrawEsp(X86Context& ctx, float unit) {
         float head[3] = {at[0], at[1] + kHeight, at[2]};
         float f[2], h[2];
         if (!Project(feet, vx, vy, vw, vh, f) || !Project(head, vx, vy, vw, vh, h)) continue;
+        // the box width in screen space — used to size the health bar consistently across distances
         float full_h_screen = f[1] - h[1];
         float char_width_screen = full_h_screen * kBoxWidth;
         float half = char_width_screen * 0.5f;
