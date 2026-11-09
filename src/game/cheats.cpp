@@ -37,27 +37,21 @@ constexpr float kFullHealth[] = {1200.0f, 750.0f};
 //      The held weapon's animation is cleared at a rate proportional to rapid_fire_extra.
 //
 //  (C) Hand grenades: gated by rapid_fire_extra > 1 AND infinite_grenades ALONE. The throw
-//      rate now FOLLOWS THE LEVEL: forced releases via direct sub_001E8830 calls bring
-//      additional grenades per cycle, on top of the natural release.
+//      rate is now FRAME-RATE LIMITED to match RPG fire rate:
+//        - Every frame, we attempt a FORCED RELEASE via a direct call to sub_001E8830 (the
+//          animation release handler) with a synthetic event struct.
+//        - If the call spawns a grenade (count drops), we restore the count (infinite
+//          grenades) and let the animation clear from our hook. Success = 1 grenade/frame
+//          = 60 throws/sec at 60 fps — the SAME rate as a max-level RPG.
+//        - If the call is rejected by the game (count does NOT drop because animation state
+//          does not permit release), we count a failure. After 5 consecutive failures we
+//          permanently disable forcing and fall back to the natural animation-driven rate
+//          (~2-3 throws/sec — still continuous spam, but not frame-rate).
 //
-//      Rate model:
-//        - Natural throw cycle: ~30 frames per throw (2/sec at 60 fps), bounded by the throw
-//          animation's release frame.
-//        - Forced extra releases: 1 attempt every (30 / level) frames, on top of natural.
-//        - Level 2: ~4/sec total. Level 8: ~16/sec. Level 30+: ~62/sec (frame-capped).
-//
-//      Forced release mechanics:
-//        - We call sub_001E8830 (the release event handler) with a synthetic event struct
-//          whose first field points to the character.
-//        - If the count drops after the call, the release WORKED — a grenade was spawned.
-//        - We restore the count (infinite grenades) and continue.
-//        - If the count does NOT drop, the release FAILED (animation state wrong) — we
-//          permanently disable forcing for this session and fall back to natural rate.
-//        - The g_throw_just_fired flag is also set by the hook on each successful forced
-//          release, so our natural handler still clears the animation on the next frame.
-//
-//      If forcing is disabled (game rejects calls mid-animation), you still get continuous
-//      natural spam at ~2/sec — same behavior as before.
+//      The synthetic event struct passed to sub_001E8830 is 16 bytes with the character
+//      pointer at offset 0 (which is what our hook reads at esp+0xC → R32(who)). All
+//      general-purpose registers are saved and restored around the CallGuest so the game's
+//      own update loop is not disturbed.
 constexpr uint32_t kWeaponManager = 0x2D12D0;
 constexpr uint32_t kTableCount = 1;
 constexpr uint32_t kTableEntries = 4;
@@ -71,15 +65,14 @@ constexpr uint32_t kInvSwitchTo = 0x28;
 constexpr uint32_t kInvRequest = 0x38;
 constexpr uint32_t kInvBusy = 0xB4;
 constexpr uint32_t kSuppressorBusy = 0x13;
-constexpr uint32_t kReleaseEvent = 0x001E8830;  // sub_001E8830: the animation release event
+constexpr uint32_t kReleaseEvent = 0x001E8830;  // sub_001E8830: the throw's release handler
 constexpr int kMaxRapidLevel = 8;
 
-// Two independent animation-clear counters.
 int g_sniper_counter = kMaxRapidLevel;
 int g_explosive_counter = kMaxRapidLevel;
 
-// Set true by sub_001E8830 when the grenade count drops (a throw just fired). Consumed by
-// ExtraRapidFire to clear the throw animations right after the release.
+// Set true by sub_001E8830 (the real hook) when a grenade count drops. ExtraRapidFire consumes
+// it to clear the throw animations right after the release.
 std::atomic<bool> g_throw_just_fired{false};
 
 uint32_t Player() { return R32(kWorld) ? R32(kWorld) + kWorldPlayer : 0; }
@@ -148,36 +141,43 @@ SlowCategory SlowCategoryOf(uint32_t weapon) {
     return kCatNone;
 }
 
-// ---- forced grenade release (rate scaling) ----------------------------------------------------------
-//
-// Tries to call sub_001E8830 with a synthetic event struct whose first field is the character.
-// Returns true if a grenade was spawned (count dropped), false otherwise.
+// Clear the throw-related animation fields so the game sees "idle" next frame.
+void ClearThrowAnimations(uint32_t me, uint32_t inv) {
+    uint32_t held = R32(inv + kInvHeld);
+    if (held) {
+        uint32_t hv = R32(held + kWeaponAnim);
+        if (hv < 0x1000) W32(held + kWeaponAnim, 0);
+    }
+    uint32_t mv = R32(me + kWeaponAnim);
+    if (mv < 0x1000) W32(me + kWeaponAnim, 0);
+    uint32_t busy = R32(inv + kInvBusy);
+    if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
+}
+
+// Try to force a grenade release by calling sub_001E8830 with a synthetic event struct.
+// Returns true if the grenade count dropped (a grenade spawned), false otherwise.
 //
 // Safety:
-//   - All general-purpose registers are saved and restored around the call.
-//   - If the count does NOT drop (release rejected due to animation state), returns false.
-//   - The caller disables forcing after kMaxForceFailures consecutive failures.
-//
-// The synthetic event struct: just a 16-byte buffer whose first uint32 is the character
-// pointer. The hook sub_001E8830 reads only R32(who) to get the character, so this minimal
-// struct is what it needs. The original function may read more, but if it strictly requires
-// animation state to spawn, the count won't drop and we detect the failure.
+//   - All general-purpose registers (eax, ecx, edx, esi, edi, ebx) are saved and restored
+//     around the CallGuest so the caller's state is preserved.
+//   - The event struct is 16 bytes, first field = character pointer (what the hook reads).
+//   - If the game rejects the call (count does not drop), we detect it and return false.
+//   - The caller disables forcing after 5 consecutive failures.
 bool TryForceRelease(X86Context& ctx, uint32_t me) {
     static uint32_t event_buf = 0;
     if (!event_buf) event_buf = mem::AllocSystem(16, 16);
-    W32(event_buf, me);       // who->character at offset 0
-    W32(event_buf + 4, 0);    // padding
-    W32(event_buf + 8, 0);    // padding
-    W32(event_buf + 12, 0);   // padding
+    W32(event_buf, me);
+    W32(event_buf + 4, 0);
+    W32(event_buf + 8, 0);
+    W32(event_buf + 12, 0);
 
     uint16_t before = G<uint16_t>(me + kCharGrenades);
     if (before < 1) return false;
 
-    // Save registers the game function may clobber.
     uint32_t save_eax = ctx.eax, save_ecx = ctx.ecx, save_edx = ctx.edx;
     uint32_t save_esi = ctx.esi, save_edi = ctx.edi, save_ebx = ctx.ebx;
 
-    // Call sub_001E8830(?, ?, who). Only arg3 matters — it is at esp+0xC as read by our hook.
+    // sub_001E8830(arg1, arg2, who) — the hook only reads who at esp+0xC.
     CallGuest(ctx, kReleaseEvent, {0, 0, event_buf});
 
     ctx.eax = save_eax; ctx.ecx = save_ecx; ctx.edx = save_edx;
@@ -185,7 +185,7 @@ bool TryForceRelease(X86Context& ctx, uint32_t me) {
 
     uint16_t after = G<uint16_t>(me + kCharGrenades);
     if (after < before) {
-        // Release worked — restore the count (infinite grenades) and report success.
+        // Success — restore count (infinite grenades) and report.
         G<uint16_t>(me + kCharGrenades) = before;
         return true;
     }
@@ -195,9 +195,10 @@ bool TryForceRelease(X86Context& ctx, uint32_t me) {
 constexpr int kMaxForceFailures = 5;
 
 // Called from the player's update AFTER the game's own update. Runs three independent jobs:
-//  (A) Sniper slow-fire (SNR, SN5): gated by rapid_fire > 1, throttled by rapid_fire.
-//  (B) Explosive slow-fire (RPG, GRL, BNS/M203): gated by rapid_fire_extra > 1, throttled by rapid_fire_extra.
-//  (C) Hand grenades: natural spam at ~2/sec + forced extra releases scaling with rapid_fire_extra.
+//  (A) Sniper slow-fire (SNR, SN5): throttled by rapid_fire.
+//  (B) Explosive slow-fire (RPG, GRL, BNS/M203): throttled by rapid_fire_extra.
+//  (C) Hand grenades: natural animation rate + FORCED frame-rate release (1/frame = 60/sec,
+//      matching RPG at max rapid_fire_extra). Falls back to natural if forcing is rejected.
 void ExtraRapidFire(X86Context& ctx) {
     const game::Options& o = game::Opt();
     bool sniper_on = o.rapid_fire > 1;
@@ -254,46 +255,33 @@ void ExtraRapidFire(X86Context& ctx) {
         g_explosive_counter = kMaxRapidLevel;
     }
 
-    // (C) Hand grenades — natural spam + forced releases scaling with rapid_fire_extra.
+    // (C) Hand grenades — frame-rate forced release to match RPG fire rate.
     if (grenades_on) {
-        // Safety net: always keep at least one grenade available so a new throw can start.
+        // Safety net: keep at least one grenade so a new throw can start.
         uint16_t& nades = G<uint16_t>(me + kCharGrenades);
         if (nades < 1) nades = 1;
 
-        // Natural release detected — clear animations so the next natural throw can start.
+        // Natural animation release — clear so next natural throw can start.
         if (g_throw_just_fired.exchange(false)) {
-            uint32_t held = R32(inv + kInvHeld);
-            if (held) {
-                uint32_t hv = R32(held + kWeaponAnim);
-                if (hv < 0x1000) W32(held + kWeaponAnim, 0);
-            }
-            uint32_t mv = R32(me + kWeaponAnim);
-            if (mv < 0x1000) W32(me + kWeaponAnim, 0);
-            uint32_t busy = R32(inv + kInvBusy);
-            if (busy && busy != kSuppressorBusy) W32(inv + kInvBusy, 0);
+            ClearThrowAnimations(me, inv);
         }
 
-        // Forced extra releases scaling with rapid_fire_extra level.
-        // Interval = 30 / level frames. At level 2: 15 frames (4/sec). Level 8: 3 frames
-        // (20/sec). Level 30+: 1 frame (60/sec). Failures disable forcing permanently.
+        // Forced frame-rate releases: one attempt per frame. If successful → 60 throws/sec
+        // (same as RPG at max level). If rejected by game state 5x in a row → disable and
+        // fall back to natural (~2/sec). The user still gets continuous spam either way.
         static int force_failures = 0;
-        static int force_interval_counter = 0;
         static bool force_disabled = false;
 
-        if (!force_disabled && o.rapid_fire_extra > 1) {
-            int level = int(o.rapid_fire_extra);
-            int interval = std::max(1, 30 / level);
-            force_interval_counter++;
-            if (force_interval_counter >= interval) {
-                force_interval_counter = 0;
-                if (TryForceRelease(ctx, me)) {
-                    force_failures = 0;  // reset on success
-                } else {
-                    force_failures++;
-                    if (force_failures >= kMaxForceFailures) {
-                        force_disabled = true;
-                        LOGI("granade: forced release rejected by game state, using natural rate");
-                    }
+        if (!force_disabled) {
+            if (TryForceRelease(ctx, me)) {
+                force_failures = 0;
+                // Clear animations so the next natural cycle can also start.
+                ClearThrowAnimations(me, inv);
+            } else {
+                force_failures++;
+                if (force_failures >= kMaxForceFailures) {
+                    force_disabled = true;
+                    LOGI("grenade: forced release rejected by game, using natural rate");
                 }
             }
         }
