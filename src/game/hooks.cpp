@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <set>
+#include <string>
 #include <thread>
 
 #include "app/app.h"
@@ -406,6 +408,39 @@ static void RestoreAmmo(uint32_t weapon, const KeptAmmo& kept) {
     if (G<uint16_t>(kept.ammo + kAmmoClip) < kept.clip) G<uint16_t>(kept.ammo + kAmmoClip) = kept.clip;
 }
 
+// Which weapons are EXPLOSIVE: RPG, GRL, BNS (M16A2 + M203 — the M203 under-barrel launcher's
+// slow cycle is the target). Explosives are driven by rapid_fire_extra, NOT rapid_fire.
+// Regular weapons (including bolt-action snipers SNR, SN5) stay under rapid_fire.
+static bool ExplosiveWeapon(uint32_t weapon) {
+    static const std::set<std::string> kCodes = {"RPG", "GRL", "BNS"};
+    if (!weapon) return false;
+    constexpr uint32_t kManager = 0x2D12D0;
+    constexpr uint32_t kTableCount = 1;
+    constexpr uint32_t kTableEntries = 4;
+    constexpr uint32_t kEntrySize = 0x20;
+    constexpr uint32_t kWeaponType = 0;
+    uint32_t manager = R32(kManager);
+    uint32_t table = manager ? R32(manager) : 0;
+    if (!table) return false;
+    uint32_t entries = R32(table + kTableEntries);
+    uint8_t count = G<uint8_t>(table + kTableCount);
+    int type = G<uint8_t>(weapon + kWeaponType);
+    if (!entries || count == 0 || count > 64 || type >= count) return false;
+    uint32_t e = entries + uint32_t(type) * kEntrySize;
+    uint64_t key = R32(e) | uint64_t(R32(e + 4)) << 32;
+    char s[13] = {};
+    for (int i = 11; i >= 0; i--) {
+        int c = int(key % 40);
+        key /= 40;
+        s[i] = c == 0 ? ' ' : c == 1 ? '-' : c == 2 ? '/' : c < 13 ? char('0' + c - 3)
+              : c < 39 ? char('A' + c - 13) : '_';
+    }
+    std::string name = s;
+    name.erase(name.find_last_not_of(' ') + 1);
+    if (name.size() > 4 && name.compare(0, 4, "BG1_") == 0) name = name.substr(4);
+    return kCodes.count(name) != 0;
+}
+
 // the wait between a weapon's shots. The frame of a first shot is part of it: the fire clip runs that frame too
 // and holds its next shot where the wait ends
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
@@ -420,11 +455,17 @@ X86_FUNC(sub_001EEFD0) {
     bool shot = Rounds(weapon) < rounds;
     RestoreAmmo(weapon, kept);
     uint32_t me = R32(weapon + kWeaponOwner);
-    // INFINITE RAPID FIRE: rapid_fire can reach 999 (the INFINITE sentinel the panel stores). std::max
-    // (instead of std::clamp to 8) lets the full 999 through, dividing the wait by 999 → effectively zero
-    // → the game accepts the next shot every frame. Every level from 2X through INFINITE now fires at
-    // frame rate (one projectile per frame); below 2X the game's own pacing applies.
-    uint32_t faster = std::max(game::Opt().rapid_fire, 1u);
+    // EXPLOSIVE weapons (RPG, GRL, BNS/M203) use rapid_fire_extra; regular weapons (including
+    // bolt-action snipers SNR, SN5) use rapid_fire. The two options are fully independent —
+    // rapid_fire never affects an explosive weapon, rapid_fire_extra never affects a regular one.
+    // Either value can reach 999 (INFINITE sentinel from the panel); std::max passes it through,
+    // dividing the wait by 999 → effectively zero → next shot accepted every frame.
+    uint32_t faster = 1;
+    if (me == Player()) {
+        faster = ExplosiveWeapon(weapon)
+            ? std::max(game::Opt().rapid_fire_extra, 1u)
+            : std::max(game::Opt().rapid_fire, 1u);
+    }
     if (shot && me == Player() && wait > 0) wait /= float(faster);
     if (me == Player()) {
         if (R32(weapon + kWeaponState) != 1 || wait != rest) g_idle_early = false;
