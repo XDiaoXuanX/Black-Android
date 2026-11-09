@@ -12,7 +12,7 @@ namespace game {
 inline constexpr const char* kLanguages[] = {"int", "fra", "deu", "ita", "esp", "ind"};
 
 struct Options {
-    bool skip_intros = false;
+    bool skip_intros = false;  // logos at boot and the film after pressing start
     bool fps_counter = false;
     uint32_t fmv_scale = 0;
     uint32_t screen_filter = 0;
@@ -42,32 +42,20 @@ struct Options {
     uint32_t audio_output = 0;
     std::string language = "int";
     bool infinite_ammo = false;
+    // cheat: times the player's rate of fire, 1 the game's. Applies ONLY to non-explosive weapons
+    // (pistols, SMGs, rifles, shotguns, LMGs, and bolt-action snipers SNR/SN5). Explosive weapons
+    // (RPG, GRL, BNS/M203) use rapid_fire_extra instead.
     uint32_t rapid_fire = 1;
     // cheat: rapid fire extra — a level like rapid_fire (1 = OFF, 2..999 = level).
-    // Two independent uses:
-    //  (1) Slow-fire weapons (RPG, GRL, SNR, SN5, BNS): requires rapid_fire_extra > 1 AND rapid_fire > 1.
-    //  (2) Hand grenades: requires rapid_fire_extra > 1 AND infinite_grenades. Throws continuously.
+    // Only for EXPLOSIVE weapons and hand grenades:
+    //   - RPG, GRL (single-shot launchers)
+    //   - BNS (M16A2 + M203): the M203 under-barrel launcher's slow cycle
+    //   - Hand grenades (throw continuously at any level > 1)
+    // For explosives: the wait between shots is divided by rapid_fire_extra, AND the fire animation is
+    // cleared at a rate proportional to rapid_fire_extra. For hand grenades: at ANY level > 1, grenades
+    // throw continuously, no pause, no delay, no recovery window (bounded by the throw animation's
+    // natural release frame, ~2-3 throws/sec at 60 fps).
     uint32_t rapid_fire_extra = 1;
-    // cheat: reload speed. 0 = DEFAULT (game's own speed), 1..10 = faster.
-    //
-    // Every player weapon's reload animation is sped up by scaling the animation's frame count
-    // during the animation update. The scale factor for level N is 1/(1 + N*0.3):
-    //   level 1  ≈ 1.3x faster    level 5  = 2.5x faster
-    //   level 10 = 4.0x faster
-    //
-    // The scaling applies ONLY when the player's weapon is NOT firing (weapon state != 1).
-    // Fire animations are excluded because their timing is controlled by kWeaponWait
-    // (rapid_fire / rapid_fire_extra); speeding them up would clear g_idle_early incorrectly
-    // and interrupt continuous fire. Non-fire animations (reload, weapon switch, idle) are
-    // safe to speed up — their only effect is visual, and speeding them up makes them complete
-    // sooner.
-    //
-    // Implementation: hooks.cpp's sub_0017B130 hook temporarily scales the animation clip's
-    // kAnimationFrames field (0x1C) for the duration of the update call, then restores it. The
-    // animation system reads this field to compute the clip's total duration; a shorter duration
-    // means the animation reaches its end (and any action triggered at the end, like ammo
-    // transfer during reload) sooner.
-    uint32_t reload_speed = 0;  // 0 = DEFAULT, 1..10 = faster reload
     bool no_recoil = false;
     bool no_bullet_spread = false;
     uint32_t game_speed = 100;
@@ -79,10 +67,17 @@ struct Options {
     bool unlock_black_ops = false;
     bool esp = false;
     uint32_t esp_display = 3;
+    // cheat: show the enemy's distance from the player, as a small 3-digit number above the
+    // health bar (or above the head when the health bar is off). The number is the 3D distance
+    // in metres, capped at 999. Independent of the esp_display line/health bits.
     bool esp_distance = false;
+    // cheat: directional arrows pointing at enemies. Two modes:
+    //   - EDGE:  off-screen enemies get a triangle at the screen edge, pointing toward them.
+    //   - ABOVE: on-screen enemies get a small downward triangle just above the head.
+    // Mode 0 = EDGE only, 1 = ABOVE only, 2 = BOTH. Size scales the triangle (1..10, pixels at 480p).
     bool esp_arrow = false;
-    uint32_t esp_arrow_mode = 2;
-    uint32_t esp_arrow_size = 4;
+    uint32_t esp_arrow_mode = 2;  // 0 = EDGE, 1 = ABOVE, 2 = BOTH
+    uint32_t esp_arrow_size = 4;  // 1..10, pixels at 480p
     uint32_t esp_color = 0;
     uint32_t esp_red = 224;
     uint32_t esp_green = 219;
