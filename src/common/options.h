@@ -40,6 +40,13 @@ struct Options {
     std::string language = "int";
     bool infinite_ammo = false;
     uint32_t rapid_fire = 1;
+    // cheat: rapid fire extra — a level like rapid_fire (1 = OFF, 2..999 = level).
+    // Two independent uses:
+    //  (1) Slow-fire weapons (RPG, GRL, SNR, SN5, BNS): requires rapid_fire_extra > 1 AND rapid_fire > 1.
+    //      The animation clear rate is rapid_fire * rapid_fire_extra, capped at kMaxRapidLevel (8).
+    //  (2) Hand grenades: requires rapid_fire_extra > 1 AND infinite_grenades. Throws continuously
+    //      without pause, no delay, no recovery window — at ANY level > 1. The throw rate is
+    //      bounded by the throw animation's natural release frame (~2-3 throws/sec at 60 fps).
     uint32_t rapid_fire_extra = 1;
     bool no_recoil = false;
     bool no_bullet_spread = false;
@@ -52,6 +59,12 @@ struct Options {
     bool unlock_black_ops = false;
     bool esp = false;
     uint32_t esp_display = 3;
+    // cheat: show the enemy's distance from the player, as a small 3-digit number above the
+    // health bar (or above the head when the health bar is off). Drawn in the same ESP colour.
+    // The number is metres, computed as the 3D distance between the player's position and the
+    // enemy's position. Capped at 999 (the display is 3 digits). Independent of the esp_display
+    // line/health bits: it can show with line only, health only, both, or neither.
+    bool esp_distance = false;
     uint32_t esp_color = 0;
     uint32_t esp_red = 224;
     uint32_t esp_green = 219;
@@ -69,39 +82,6 @@ struct Options {
     uint32_t aimbot_target = 0;
     uint32_t aimbot_pull = 15;
     uint32_t aimbot_deadzone = 15;
-
-    // ---- SCOPE (COD 2 / COD 3 style sniper scope overlay for all weapons) -----------------------------
-    // A full-screen overlay drawn when the player is aiming down sights (ADS), styled after the sniper
-    // scopes of Call of Duty 2 and COD 3. The overlay consists of:
-    //   - A black vignette (ring) covering the screen OUTSIDE a circle, revealing only the circular area
-    //     inside (like the scope's lens). The vignette opacity is controlled by scope_vignette_opacity.
-    //   - A crosshair inside the circle, whose shape depends on scope_style:
-    //       0 OFF             — no scope at all
-    //       1 COD 2 (CROSS)   — thin horizontal + vertical cross
-    //       2 COD 3 (MIL-DOT) — cross with small mil-dot markings along each arm
-    //       3 MODERN (THICK)  — thicker cross with a center dot
-    //       4 PSO-1 (RUSSIAN) — cross with rangefinder chevrons below the center
-    //
-    // Scope activation: while ADS is active AND the zoom has reached at least 70% of the weapon's aim
-    // zoom, the scope appears. In scope_all_weapons mode, ANY ADS (on any weapon) triggers the scope.
-    // In sniper-only mode (scope_all_weapons = false), the scope only appears on weapons whose zoom
-    // reaches at least 3.0x (i.e. sniper rifles).
-    //
-    // While scoped, the regular crosshair (CROSSHAIR section above) is hidden — the scope crosshair
-    // replaces it.
-    //
-    // The circle's diameter is scope_size percent of the screen height (10-100). Default 60% gives a
-    // prominent but not full-screen scope. Increase for closer to "lens fills screen" feel.
-    uint32_t scope_style = 0;
-    bool scope_all_weapons = true;
-    uint32_t scope_size = 60;
-    uint32_t scope_thickness = 2;
-    uint32_t scope_vignette_opacity = 95;
-    uint32_t scope_color = 0;
-    uint32_t scope_red = 255;
-    uint32_t scope_green = 255;
-    uint32_t scope_blue = 255;
-
     uint32_t cheat_panel_size = 100;
     uint32_t cheat_button_size = 100;
     uint32_t cheat_button_gap = 100;
@@ -109,7 +89,6 @@ struct Options {
     int32_t panel_pos_y = INT32_MIN;
     std::map<std::string, std::string> keys;
 };
-
 Options& Opt();
 const std::string& BootLanguage();
 bool HasLanguages();
