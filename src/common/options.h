@@ -48,31 +48,36 @@ struct Options {
     uint32_t audio_output = 0;  // audio::kOutputAuto, audio::kOutputStereo, audio::kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
     bool infinite_ammo = false;  // cheat: the player's magazine and reserve never go down
-    // cheat: times the player's rate of fire, 1 the game's. The panel offers these discrete values via
-    // kRapidFireLevels / kRapidFireNames in the cheats panel:
+    // cheat: times the player's rate of fire, 1 the game's. Applies ONLY to non-explosive weapons
+    // (pistols, SMGs, rifles, shotguns, LMGs, and bolt-action snipers SNR/SN5). The panel offers these
+    // discrete values via kRapidFireLevels / kRapidFireNames:
     //   OFF, 2X, 3X, 4X, 5X, 6X, 7X, 8X, 16X, 32X, 64X, 128X, 256X, 512X, INFINITE (999)
-    // hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire: with INFINITE (999) the wait is
-    // effectively zero → one projectile per frame (frame-rate continuous fire). With values 2..8 the wait is
-    // divided the usual way, subject to the game's fire-mode pacing.
+    // hooks.cpp (sub_001EEFD0) divides the wait between shots by rapid_fire on regular weapons: with
+    // INFINITE (999) the wait is effectively zero → one projectile per frame (frame-rate continuous
+    // fire). Explosive weapons (RPG, GRL, BNS/M203) are NOT affected by this option — they use
+    // rapid_fire_extra instead.
     uint32_t rapid_fire = 1;
-    // cheat: rapid fire extra — a level like rapid_fire (1 = OFF, 2..999 = multiplier).
-    // Two independent uses:
+    // cheat: rapid fire extra — a level like rapid_fire (1 = OFF, 2..999 = level).
+    // Only for EXPLOSIVE weapons and hand grenades:
+    //   - RPG, GRL (single-shot launchers)
+    //   - BNS (M16A2 + M203): the M203 under-barrel launcher's slow cycle
+    //   - Hand grenades (throw continuously at any level > 1)
     //
-    //  (1) Slow-fire weapons (RPG, GRL, SNR, SN5, BNS, and the M203 under-barrel launcher):
-    //      requires this level > 1 AND rapid_fire > 1. The animation clear rate is
-    //      rapid_fire * rapid_fire_extra (capped at kMaxRapidLevel), so higher levels clear the
-    //      animation more often, allowing faster follow-up shots. rapid_fire_extra = 1 (OFF)
-    //      disables this branch entirely, regardless of rapid_fire.
+    // rapid_fire does NOT apply to these weapons. rapid_fire applies only to regular
+    // (non-explosive) weapons, including the bolt-action snipers (SNR, SN5).
     //
-    //  (2) Hand grenades: requires this level > 1 AND infinite_grenades. Throws continuously
-    //      without pause, no delay, no recovery window — at any level > 1. The throw rate is
-    //      limited by the throw animation's natural release frame: the animation controller's
-    //      time-field offset is not known, so the animation cannot be sped up safely without
-    //      corrupting the animation state. At level 999 (INFINITE) grenades throw as fast as
-    //      the game's animation allows (~2-3 throws/sec at 60 fps, bounded by the release frame).
-    //      The infinite-grenades safety net keeps at least one grenade available so the next
-    //      throw can start even if the game drained the count without the release hook seeing it.
-    uint32_t rapid_fire_extra = 1;  // 1 = OFF, 2..999 = multiplier (same scale as rapid_fire)
+    // For explosives: the wait between shots is divided by rapid_fire_extra (hooks.cpp sub_001EEFD0),
+    // AND the fire animation is cleared at a rate proportional to rapid_fire_extra (cheats.cpp
+    // ExtraRapidFire) — 2X = every 4th frame, 8X+ = every frame. Any level >= kMaxRapidLevel (8)
+    // clears the animation every frame — the fastest the game allows.
+    //
+    // For hand grenades: at ANY level > 1, grenades throw continuously, no pause, no delay, no
+    // recovery window (bounded by the throw animation's natural release frame, ~2-3 throws/sec at
+    // 60 fps). The rate does NOT scale further with the level — the animation controller's time-field
+    // offset is unknown, so the animation cannot be sped up safely without corrupting state. What
+    // follows the level is CONTINUOUS SPAM; the exact level does not change the grenade throw rate
+    // (all levels > 1 are equal in effect).
+    uint32_t rapid_fire_extra = 1;  // 1 = OFF, 2..999 = level (same scale as rapid_fire)
     bool no_recoil = false;  // cheat: the player's shots do not kick the view
     // cheat: bullets fly straight from the muzzle (no spread cone) AND the weapon stays exactly on the aim
     // line during fire. Two things are zeroed when this is on, in addition to the spread floats at
