@@ -353,7 +353,7 @@ void RestartForLanguage() {
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity,
              kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kAudioOutput, kLanguage,
              kFmvScale, kGyro, kGyroSensitivity, kTouchLayout, kTouchOpacity, kTouchSize, kTouchEdit,
-             kInfiniteAmmo, kRapidFire, kRapidFireExtra, kReloadSpeed, kNoRecoil, kNoBulletSpread,
+             kInfiniteAmmo, kRapidFire, kRapidFireExtra, kNoRecoil, kNoBulletSpread,
              kGameSpeed, kGodMode, kOneHitKill,
              kInfiniteGrenades, kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity,
              kRightSensitivity, kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin,
@@ -433,7 +433,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
     {Kind::Value, kRapidFire, "RAPID FIRE"},
     {Kind::Value, kRapidFireExtra, "RAPID FIRE EXTRA"},
-    {Kind::Value, kReloadSpeed, "RELOAD SPEED"},
     {Kind::Value, kNoRecoil, "NO RECOIL"},
     {Kind::Value, kNoBulletSpread, "NO BULLET SPREAD"},
     {Kind::Heading, -1, "PLAYER"},
@@ -661,10 +660,6 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s", kRapidFireNames[i]);
             return true;
         }
-        case kReloadSpeed:
-            if (step) o.reload_speed = uint32_t(StepRange(int(o.reload_speed), 0, 10, 1, step));
-            std::snprintf(text, sizeof(text), o.reload_speed == 0 ? "%u (DEFAULT)" : "%u", o.reload_speed);
-            return true;
         case kEspDisplay:
             if (step) o.esp_display = uint32_t(StepRange(int(o.esp_display), 0, 3, 1, step));
             std::snprintf(text, sizeof(text), "%s", kEspDisplayNames[std::clamp(o.esp_display, 0u, 3u)]);
@@ -942,7 +937,6 @@ void RestoreDefaults(int page) {
         o.infinite_ammo = none.infinite_ammo;
         o.rapid_fire = none.rapid_fire;
         o.rapid_fire_extra = none.rapid_fire_extra;
-        o.reload_speed = none.reload_speed;
         o.no_recoil = none.no_recoil;
         o.no_bullet_spread = none.no_bullet_spread;
         o.game_speed = none.game_speed;
@@ -1005,7 +999,6 @@ void RestoreDefaults(int page) {
     o.infinite_ammo = keep.infinite_ammo;
     o.rapid_fire = keep.rapid_fire;
     o.rapid_fire_extra = keep.rapid_fire_extra;
-    o.reload_speed = keep.reload_speed;
     o.no_recoil = keep.no_recoil;
     o.no_bullet_spread = keep.no_bullet_spread;
     o.game_speed = keep.game_speed;
