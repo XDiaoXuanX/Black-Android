@@ -69,14 +69,9 @@ namespace {
 std::atomic<bool> g_open{false};
 
 // ---- language restart confirmation --------------------------------------------------------------
-// Set when the user steps the LANGUAGE row to a code that is not the language this process booted
-// with: the game only reads its language at boot, so a change needs a fresh process. The modal in
-// DrawLanguageRestartDialog offers Yes (Restart) — Save() then a SDL_EVENT_QUIT that the main loop
-// catches and quits from — or No (Cancel) — revert to the code stored here and Save() again.
-// Escape and closing the panel both mean Cancel.
 bool g_language_restart_open = false;
-std::string g_language_previous_code;   // the code before the step, restored on Cancel
-std::string g_language_pending_label;   // the new language's display name, shown in the modal
+std::string g_language_previous_code;
+std::string g_language_pending_label;
 
 constexpr ImVec4 kPanelBg{0.035f, 0.03f, 0.025f, 0.94f};
 constexpr ImVec4 kBorder{0.72f, 0.58f, 0.30f, 0.85f};
@@ -115,8 +110,17 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
                                       audio::kOutputSurround};
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
-                                      "INDONESIAN"};  // as game::kLanguages
+                                      "INDONESIAN"};
 const char* const kAimbotTargetNames[] = {"NECK", "BODY", "LEGS", "HEAD"};
+
+// ---- SCOPE styles (COD 2 / COD 3 / Modern / PSO-1) ----------------------------------------------
+const char* const kScopeStyleNames[] = {
+    "OFF",
+    "COD 2 (CROSS)",
+    "COD 3 (MIL-DOT)",
+    "MODERN (THICK)",
+    "PSO-1 (RUSSIAN)",
+};
 
 constexpr uint32_t kRapidFireLevels[] = {
     1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128, 256, 512, 999,
@@ -127,10 +131,10 @@ const char* const kRapidFireNames[] = {
 };
 
 const char* const kEspDisplayNames[] = {
-    "OFF",             // 0
-    "LINE",            // 1
-    "HEALTH",          // 2
-    "LINE + HEALTH",   // 3 (default)
+    "OFF",
+    "LINE",
+    "HEALTH",
+    "LINE + HEALTH",
 };
 
 struct EspPreset {
@@ -187,13 +191,13 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
     return lo + inc * StepIndex((std::clamp(value, lo, hi) - lo) / inc, step, count);
 }
 
-// ---- panel drag-anywhere ----------------------------------------------------------------------------------
+// ---- panel drag-anywhere ------------------------------------------------------------------------
 static bool g_panel_dragging = false;
 static ImVec2 g_panel_drag_origin;
 static ImVec2 g_panel_mouse_origin;
 static bool g_panel_drag_moved = false;
 
-// ---- collapsible sections ----------------------------------------------------------------------------------
+// ---- collapsible sections ----------------------------------------------------------------------
 std::map<std::string, bool> g_collapsed;
 
 bool Section(const char* title) {
@@ -341,11 +345,6 @@ void Changed() {
     Save();
 }
 
-// Called from the modal's Yes (Restart) button. The language is already saved (Changed() runs when
-// the row steps), this just makes sure everything else is committed too before the process exits.
-// The main loop owns the actual SDL_Quit; pushing SDL_EVENT_QUIT is the cleanest cross-platform
-// request. On Android the activity finishes, the launcher can relaunch; on desktop the process ends
-// and a relaunch picks the new language up at boot.
 void RestartForLanguage() {
     Changed();
     SDL_Event ev;
@@ -364,6 +363,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kEspRed, kEspGreen, kEspBlue, kCrosshair, kCrosshairStyle, kCrosshairSize, kCrosshairThickness,
              kCrosshairGap, kCrosshairColor, kCrosshairRed, kCrosshairGreen, kCrosshairBlue,
              kAimbot, kAimbotTarget, kAimbotPull, kAimbotDeadzone, kTouchStick,
+             kScopeStyle, kScopeAllWeapons, kScopeSize, kScopeThickness,
+             kScopeVignetteOpacity, kScopeColor, kScopeRed, kScopeGreen, kScopeBlue,
              kDynamicRes, kDynamicTarget, kDynamicMin, kDynamicMax, kDynamicHold, kAutoUpdate, kInfiniteMedkits,
              kCheatPanelSize, kCheatButtonSize, kCheatButtonGap, kCheatReset };
 
@@ -463,6 +464,16 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kAimbotTarget, "AIMBOT TARGET"},
     {Kind::Value, kAimbotPull, "AIMBOT PULL"},
     {Kind::Value, kAimbotDeadzone, "AIMBOT DEADZONE"},
+    {Kind::Heading, -1, "SCOPE"},
+    {Kind::Value, kScopeStyle, "SCOPE STYLE"},
+    {Kind::Value, kScopeAllWeapons, "SCOPE ALL WEAPONS"},
+    {Kind::Value, kScopeSize, "SCOPE SIZE"},
+    {Kind::Value, kScopeThickness, "SCOPE THICKNESS"},
+    {Kind::Value, kScopeVignetteOpacity, "SCOPE VIGNETTE"},
+    {Kind::Value, kScopeColor, "SCOPE COLOR"},
+    {Kind::Value, kScopeRed, "SCOPE RED"},
+    {Kind::Value, kScopeGreen, "SCOPE GREEN"},
+    {Kind::Value, kScopeBlue, "SCOPE BLUE"},
     {Kind::Heading, -1, "GAME"},
     {Kind::Value, kGameSpeed, "GAME SPEED"},
     {Kind::Value, kUnlockLevels, "UNLOCK ALL MISSIONS"},
@@ -554,6 +565,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kUnlockLevels: return &o.unlock_levels;
         case kUnlockBlackOps: return &o.unlock_black_ops;
         case kAimbot: return &o.aimbot;
+        case kScopeAllWeapons: return &o.scope_all_weapons;
         case kDynamicRes: return &o.dynamic_resolution;
         default: return nullptr;
     }
@@ -746,6 +758,51 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.aimbot_deadzone = uint32_t(StepRange(int(o.aimbot_deadzone), 0, 300, 1, step));
             std::snprintf(text, sizeof(text), "%.1f", o.aimbot_deadzone / 10.0f);
             return true;
+        case kScopeStyle:
+            if (step) o.scope_style = uint32_t(StepRange(int(o.scope_style), 0, 4, 1, step));
+            std::snprintf(text, sizeof(text), "%s", kScopeStyleNames[std::clamp(o.scope_style, 0u, 4u)]);
+            return true;
+        case kScopeSize:
+            if (step) o.scope_size = uint32_t(StepRange(int(o.scope_size), 10, 100, 5, step));
+            std::snprintf(text, sizeof(text), "%u%%", o.scope_size);
+            return true;
+        case kScopeThickness:
+            if (step) o.scope_thickness = uint32_t(StepRange(int(o.scope_thickness), 1, 10, 1, step));
+            std::snprintf(text, sizeof(text), "%u", o.scope_thickness);
+            return true;
+        case kScopeVignetteOpacity:
+            if (step) o.scope_vignette_opacity = uint32_t(StepRange(int(o.scope_vignette_opacity), 0, 100, 5, step));
+            std::snprintf(text, sizeof(text), "%u%%", o.scope_vignette_opacity);
+            return true;
+        case kScopeColor: {
+            uint32_t preset = std::clamp(o.scope_color, 0u, uint32_t(kEspPresetCount));
+            if (step) {
+                preset = uint32_t(StepIndex(int(preset), step, int(kEspPresetCount) + 1));
+                o.scope_color = preset;
+                if (preset < kEspPresetCount) {
+                    const EspPreset& p = kEspPresets[preset];
+                    o.scope_red = uint32_t(p.r * 255.0f + 0.5f);
+                    o.scope_green = uint32_t(p.g * 255.0f + 0.5f);
+                    o.scope_blue = uint32_t(p.b * 255.0f + 0.5f);
+                }
+            }
+            std::snprintf(text, sizeof(text), "%s",
+                          preset < kEspPresetCount ? kEspPresets[preset].name : "CUSTOM");
+            return true;
+        }
+        case kScopeRed:
+        case kScopeGreen:
+        case kScopeBlue: {
+            uint32_t& channel = id == kScopeRed ? o.scope_red
+                              : id == kScopeGreen ? o.scope_green
+                              : o.scope_blue;
+            if (step) {
+                channel = uint32_t(StepRange(int(channel), 0, 255, 1, step));
+                o.scope_color = uint32_t(kEspPresetCount);
+            }
+            std::snprintf(text, sizeof(text), "%u", channel);
+            return true;
+        }
         case kGameSpeed:
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
             std::snprintf(text, sizeof(text), o.game_speed == 100 ? "%u%% (DEFAULT)" : "%u%%", o.game_speed);
@@ -872,8 +929,6 @@ void StepInputRow(int id, int step, char (&text)[64]) {
                 if (i != before) {
                     std::string previous = o.language;
                     o.language = game::kLanguages[i];
-                    // The game reads its language at boot, so any change to a code other than the one this
-                    // process started with needs a fresh process. Ask the user; the modal offers Yes / No.
                     if (o.language != game::BootLanguage()) {
                         g_language_previous_code = previous;
                         g_language_pending_label = kLanguageNames[i];
@@ -955,6 +1010,15 @@ void RestoreDefaults(int page) {
         o.aimbot_target = none.aimbot_target;
         o.aimbot_pull = none.aimbot_pull;
         o.aimbot_deadzone = none.aimbot_deadzone;
+        o.scope_style = none.scope_style;
+        o.scope_all_weapons = none.scope_all_weapons;
+        o.scope_size = none.scope_size;
+        o.scope_thickness = none.scope_thickness;
+        o.scope_vignette_opacity = none.scope_vignette_opacity;
+        o.scope_color = none.scope_color;
+        o.scope_red = none.scope_red;
+        o.scope_green = none.scope_green;
+        o.scope_blue = none.scope_blue;
         Changed();
         return;
     }
@@ -1013,6 +1077,15 @@ void RestoreDefaults(int page) {
     o.aimbot_target = keep.aimbot_target;
     o.aimbot_pull = keep.aimbot_pull;
     o.aimbot_deadzone = keep.aimbot_deadzone;
+    o.scope_style = keep.scope_style;
+    o.scope_all_weapons = keep.scope_all_weapons;
+    o.scope_size = keep.scope_size;
+    o.scope_thickness = keep.scope_thickness;
+    o.scope_vignette_opacity = keep.scope_vignette_opacity;
+    o.scope_color = keep.scope_color;
+    o.scope_red = keep.scope_red;
+    o.scope_green = keep.scope_green;
+    o.scope_blue = keep.scope_blue;
     o.cheat_panel_size = keep.cheat_panel_size;
     o.cheat_button_size = keep.cheat_button_size;
     o.cheat_button_gap = keep.cheat_button_gap;
@@ -1200,15 +1273,6 @@ void DrawWeapons() {
     }
 }
 
-// The confirmation shown after the user steps LANGUAGE to a code other than the boot language. The
-// row's "(RESTART)" suffix tells the user a restart is pending; this modal gives them the choice.
-//   Yes (Restart) — Save() is a no-op if nothing else changed, then SDL_EVENT_QUIT lets the main loop
-//                    quit cleanly. On Android the activity finishes, the launcher can relaunch; on
-//                    desktop the process ends and a relaunch picks the new language up at boot.
-//   No (Cancel)  — revert to g_language_previous_code and Save() again, so a relaunch would boot
-//                    with the old language (the change never took effect in the running game either).
-//   Escape       — same as Cancel.
-// Closing the panel while the modal is open also cancels; see ToggleMenu().
 void DrawLanguageRestartDialog(float em) {
     if (g_language_restart_open && !ImGui::IsPopupOpen("##language_restart")) {
         ImGui::OpenPopup("##language_restart");
@@ -1540,9 +1604,6 @@ void ToggleMenu() {
     g_open.store(open, std::memory_order_relaxed);
     g_capture = -1;
     g_panel_dragging = false;
-    // Closing the panel while the language-restart modal is open is treated as Cancel: the new
-    // language never applied to this process, and leaving "(RESTART)" on the row would be misleading.
-    // Reopen the panel and the LANGUAGE row is back on the language the process actually booted with.
     if (!open && g_language_restart_open) {
         g_language_restart_open = false;
         game::Opt().language = g_language_previous_code;
