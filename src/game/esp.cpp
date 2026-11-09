@@ -6,15 +6,14 @@
 // above 33%, red below). AIMBOT: the view turns to the point on the living enemy nearest the crosshair chosen
 // by aimbot_target (neck, body, legs or head), by aimbot_pull each frame, but never inside aimbot_deadzone.
 //
+// ESP DISTANCE (esp_distance): shows the enemy's distance from the player as a small 3-digit number above the
+// health bar (or above the head if the health bar is off). Drawn with 7-segment digits made from the same
+// untextured triangle batch as everything else, in the ESP colour. The number is the 3D distance in metres,
+// capped at 999 to fit the 3-digit display.
+//
 // The CROSSHAIR (options.h) is drawn in the same 2D layer, in the centre of the viewport, with its own shape
 // (+ / * / X / DOT) and colour scheme (preset or custom RGB, like ESP). It is drawn first, before the ESP
 // guard, so it appears even when ESP is off.
-//
-// The SCOPE (options.h) is drawn in the same 2D layer when the player is aiming down sights. It consists of
-// a black vignette (ring) revealing only a circular area, and a crosshair whose shape depends on scope_style.
-// See options.h's SCOPE section for the full documentation. The scope is drawn BEFORE the crosshair, so the
-// crosshair appears on top of the scope if both are enabled (though typically the crosshair is hidden while
-// scoped).
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -42,32 +41,32 @@ constexpr uint32_t kEnemyKind = 1;
 constexpr uint32_t kControllerYaw = 0x18;
 constexpr uint32_t kControllerPitch = 0x1C;
 
-// player / weapon offsets used by the scope detection
-constexpr uint32_t kPlayerInventory = 0x278;
-constexpr uint32_t kInvHeld = 0x24;
-constexpr uint32_t kPlayerZoom = 0x2A4;     // float, the current ADS zoom (1 = hip)
-constexpr uint32_t kWeaponData = 0xEC;
-constexpr uint32_t kDataAimZoom = 0xB4;     // float, the weapon's aim zoom target
+constexpr float kHeight = 1.8f;      // world units are metres: the near plane is 0.08
+constexpr float kBoxWidth = 0.45f;   // of the box's height — used for the health bar's width
+constexpr float kNear = 0.08f;       // clip w nearer than this is behind the camera
+constexpr float kThickness = 1.5f;   // lines of a 480 frame
 
-constexpr float kHeight = 1.8f;
-constexpr float kBoxWidth = 0.45f;
-constexpr float kNear = 0.08f;
-constexpr float kThickness = 1.5f;
+// aimbot target heights above the feet, chosen by aimbot_target
+constexpr float kAimHeights[4] = {
+    1.55f,  // NECK (default)
+    1.15f,  // BODY
+    0.45f,  // LEGS
+    1.68f,  // HEAD
+};
 
-constexpr float kAimHeights[4] = {1.55f, 1.15f, 0.45f, 1.68f};
-
+// the ESP line colours the preset row offers
 struct EspPreset {
     float r, g, b;
 };
 constexpr EspPreset kEspPresets[] = {
-    {0.88f, 0.86f, 0.82f},
-    {1.00f, 0.20f, 0.20f},
-    {0.20f, 1.00f, 0.30f},
-    {0.20f, 0.90f, 1.00f},
-    {1.00f, 0.85f, 0.20f},
-    {1.00f, 0.30f, 1.00f},
-    {1.00f, 0.55f, 0.10f},
-    {0.70f, 0.40f, 1.00f},
+    {0.88f, 0.86f, 0.82f},  // WHITE
+    {1.00f, 0.20f, 0.20f},  // RED
+    {0.20f, 1.00f, 0.30f},  // GREEN
+    {0.20f, 0.90f, 1.00f},  // CYAN
+    {1.00f, 0.85f, 0.20f},  // YELLOW
+    {1.00f, 0.30f, 1.00f},  // MAGENTA
+    {1.00f, 0.55f, 0.10f},  // ORANGE
+    {0.70f, 0.40f, 1.00f},  // PURPLE
 };
 constexpr size_t kEspPresetCount = sizeof(kEspPresets) / sizeof(kEspPresets[0]);
 
@@ -99,12 +98,16 @@ struct Vertex {
     float x, y;
 };
 
-constexpr size_t kVertsPerEnemy = 24;
+// Per-enemy vertex budget:
+//   line         : 6   (2 triangles)
+//   health bar   : 12  (background + fill, 2 triangles each)
+//   distance     : up to 3 digits × 7 segments × 6 verts = 126
+//   total max    : 144 → rounded to 200 for safety
+constexpr size_t kVertsPerEnemy = 200;
 constexpr size_t kMaxVertices = kMaxEnemies * kVertsPerEnemy;
 
-// Combined overlay buffer (scope + crosshair): 32-segment vignette (192 verts) +
-// crosshair up to ~120 verts + margin = 512 verts.
-constexpr size_t kCombinedOverlayVerts = 512;
+// Crosshair vertex budget: the * shape is 8 arms × 6 verts = 48, round up to 64.
+constexpr size_t kCrosshairMaxVerts = 64;
 
 void Remember(uint32_t who) {
     auto now = std::chrono::steady_clock::now();
@@ -153,22 +156,6 @@ void CurrentCrosshairColour(float out[4]) {
     out[3] = 1.0f;
 }
 
-void CurrentScopeColour(float out[4]) {
-    const game::Options& opts = game::Opt();
-    uint32_t preset = opts.scope_color;
-    if (preset < kEspPresetCount) {
-        out[0] = kEspPresets[preset].r;
-        out[1] = kEspPresets[preset].g;
-        out[2] = kEspPresets[preset].b;
-    } else {
-        out[0] = float(opts.scope_red) / 255.0f;
-        out[1] = float(opts.scope_green) / 255.0f;
-        out[2] = float(opts.scope_blue) / 255.0f;
-    }
-    out[3] = 1.0f;
-}
-
-// clip space; false behind the camera
 bool Clip(const float p[3], float clip[4]) {
     float eye[4];
     for (int c = 0; c < 4; c++)
@@ -179,7 +166,6 @@ bool Clip(const float p[3], float clip[4]) {
     return clip[3] > kNear;
 }
 
-// screen position in viewport pixels; false behind the camera
 bool Project(const float p[3], float vx, float vy, float vw, float vh, float out[2]) {
     float clip[4];
     if (!Clip(p, clip)) return false;
@@ -203,7 +189,85 @@ void WriteSegment(Vertex*& v, uint8_t*& c, float x0, float y0, float x1, float y
     }
 }
 
-// ---- crosshair -------------------------------------------------------------------------------------------
+// ---- 7-segment digit rendering (used for ESP DISTANCE) ---------------------------------------------------
+//
+// Each digit is a standard 7-segment layout drawn as rectangles:
+//    ---A---
+//   |       |
+//   F       B
+//   |       |
+//    ---G---
+//   |       |
+//   E       C
+//   |       |
+//    ---D---
+//
+// Segment mask bits:
+//   bit 0 = A (top)
+//   bit 1 = B (top-right)
+//   bit 2 = C (bottom-right)
+//   bit 3 = D (bottom)
+//   bit 4 = E (bottom-left)
+//   bit 5 = F (top-left)
+//   bit 6 = G (middle)
+constexpr uint8_t kDigitSegments[10] = {
+    0x3F,  // 0 = A B C D E F
+    0x06,  // 1 = B C
+    0x5B,  // 2 = A B D E G
+    0x4F,  // 3 = A B C D G
+    0x66,  // 4 = B C F G
+    0x6D,  // 5 = A C D F G
+    0x7D,  // 6 = A C D E F G
+    0x07,  // 7 = A B C
+    0x7F,  // 8 = A B C D E F G
+    0x6F,  // 9 = A B C D F G
+};
+
+// Draws one digit in the cell (x, y) to (x + w, y + h), segment thickness = t.
+void DrawDigit(Vertex*& v, uint8_t*& c, float x, float y, float w, float h, int digit, float t,
+               const float colour[4]) {
+    if (digit < 0 || digit > 9) return;
+    uint8_t mask = kDigitSegments[digit];
+    // A: top horizontal
+    if (mask & 0x01) WriteSegment(v, c, x + t, y + t * 0.5f, x + w - t, y + t * 0.5f, t, colour);
+    // B: top-right vertical
+    if (mask & 0x02) WriteSegment(v, c, x + w - t * 0.5f, y + t, x + w - t * 0.5f, y + h * 0.5f - t * 0.5f, t, colour);
+    // C: bottom-right vertical
+    if (mask & 0x04) WriteSegment(v, c, x + w - t * 0.5f, y + h * 0.5f + t * 0.5f, x + w - t * 0.5f, y + h - t, t, colour);
+    // D: bottom horizontal
+    if (mask & 0x08) WriteSegment(v, c, x + t, y + h - t * 0.5f, x + w - t, y + h - t * 0.5f, t, colour);
+    // E: bottom-left vertical
+    if (mask & 0x10) WriteSegment(v, c, x + t * 0.5f, y + h * 0.5f + t * 0.5f, x + t * 0.5f, y + h - t, t, colour);
+    // F: top-left vertical
+    if (mask & 0x20) WriteSegment(v, c, x + t * 0.5f, y + t, x + t * 0.5f, y + h * 0.5f - t * 0.5f, t, colour);
+    // G: middle horizontal
+    if (mask & 0x40) WriteSegment(v, c, x + t, y + h * 0.5f, x + w - t, y + h * 0.5f, t, colour);
+}
+
+// Draws an integer (0..999) centred at cx horizontally, with the bottom edge at bottom_y.
+void DrawNumber(Vertex*& v, uint8_t*& c, float cx, float bottom_y, float w, float h, int number, float t,
+                const float colour[4]) {
+    int digits[3];
+    int n = 0;
+    int val = number < 0 ? 0 : (number > 999 ? 999 : number);
+    if (val == 0) {
+        digits[n++] = 0;
+    } else {
+        while (val > 0 && n < 3) {
+            digits[n++] = val % 10;
+            val /= 10;
+        }
+    }
+    float total_w = float(n) * w + float(n - 1) * t;
+    float x = cx - total_w * 0.5f;
+    float y = bottom_y - h;
+    for (int i = n - 1; i >= 0; i--) {
+        DrawDigit(v, c, x, y, w, h, digits[i], t, colour);
+        x += w + t;
+    }
+}
+
+// ---- crosshair ---------------------------------------------------------------------------------------------
 constexpr float kDiag = 0.70710678f;
 
 void DrawArm(Vertex*& v, uint8_t*& c, float cx, float cy, float dx, float dy, float gap, float size, float thick,
@@ -224,13 +288,13 @@ void DrawCrosshairSegments(Vertex*& v, uint8_t*& c, float cx, float cy, float un
     CurrentCrosshairColour(colour);
 
     switch (opts.crosshair_style) {
-        case 0:  // + (cross)
+        case 0:  // +
             DrawArm(v, c, cx, cy, 1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, 0, -1, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, 0, 1, gap, size, thick, colour);
             break;
-        case 1:  // * (star)
+        case 1:  // *
             DrawArm(v, c, cx, cy, 1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, -1, 0, gap, size, thick, colour);
             DrawArm(v, c, cx, cy, 0, -1, gap, size, thick, colour);
@@ -254,148 +318,6 @@ void DrawCrosshairSegments(Vertex*& v, uint8_t*& c, float cx, float cy, float un
         default:
             break;
     }
-}
-
-// ---- scope (COD 2 / COD 3 style) ---------------------------------------------------------------------------
-//
-// Detection: the player must be aiming down sights (zoom > 1) AND have reached at least 70% of the
-// weapon's aim zoom, so the scope appears when the gun is mostly up (like COD). In all-weapons mode
-// any weapon that reaches this threshold triggers the scope. In sniper-only mode the zoom must also
-// be at least 3.0x (sniper-level).
-bool IsScoped(const game::Options& opts) {
-    if (opts.scope_style == 0) return false;
-    if (!R32(kWorld) || !g_camera) return false;
-    uint32_t me = R32(kWorld) + kWorldPlayer;
-    uint32_t inv = me + kPlayerInventory;
-    uint32_t weapon = R32(inv + kInvHeld);
-    if (!weapon) return false;
-    uint32_t data = R32(weapon + kWeaponData);
-    if (!data) return false;
-    float aim = G<float>(data + kDataAimZoom);
-    if (aim <= 1.0f) return false;
-    float zoom = G<float>(me + kPlayerZoom);
-    if (zoom < 1.01f) return false;
-    // ADS progress: (zoom - 1) / (aim - 1) = 0 hip, 1 full aim
-    float progress = (zoom - 1.0f) / (aim - 1.0f);
-    if (progress < 0.7f) return false;
-    if (opts.scope_all_weapons) return true;
-    return zoom >= 3.0f;
-}
-
-void DrawScopeSegments(Vertex*& v, uint8_t*& c, float vx, float vy, float vw, float vh, float unit) {
-    const game::Options& opts = game::Opt();
-    float size_pct = float(std::clamp(opts.scope_size, 10u, 100u)) / 100.0f;
-    float diameter = vh * size_pct;
-    float radius = diameter * 0.5f;
-    float cx = vx + vw * 0.5f;
-    float cy = vy + vh * 0.5f;
-
-    // Vignette: black ring from the circle edge to the screen corners.
-    float black[4] = {0.0f, 0.0f, 0.0f, float(std::clamp(opts.scope_vignette_opacity, 0u, 100u)) / 100.0f};
-    constexpr int kSegments = 32;
-    float outer_r = std::sqrt(vw * vw + vh * vh) * 0.5f + 16.0f;
-    for (int i = 0; i < kSegments; i++) {
-        float a0 = 2.0f * 3.14159265f * float(i) / float(kSegments);
-        float a1 = 2.0f * 3.14159265f * float(i + 1) / float(kSegments);
-        float cos0 = std::cos(a0), sin0 = std::sin(a0);
-        float cos1 = std::cos(a1), sin1 = std::sin(a1);
-        float x0i = cx + cos0 * radius;
-        float y0i = cy + sin0 * radius;
-        float x1i = cx + cos1 * radius;
-        float y1i = cy + sin1 * radius;
-        float x0o = cx + cos0 * outer_r;
-        float y0o = cy + sin0 * outer_r;
-        float x1o = cx + cos1 * outer_r;
-        float y1o = cy + sin1 * outer_r;
-        // Triangle 1: inner0, inner1, outer0
-        *v++ = {x0i, y0i}; std::memcpy(c, black, 16); c += 16;
-        *v++ = {x1i, y1i}; std::memcpy(c, black, 16); c += 16;
-        *v++ = {x0o, y0o}; std::memcpy(c, black, 16); c += 16;
-        // Triangle 2: inner1, outer1, outer0
-        *v++ = {x1i, y1i}; std::memcpy(c, black, 16); c += 16;
-        *v++ = {x1o, y1o}; std::memcpy(c, black, 16); c += 16;
-        *v++ = {x0o, y0o}; std::memcpy(c, black, 16); c += 16;
-    }
-
-    // Crosshair: shape depends on scope_style.
-    float col[4];
-    CurrentScopeColour(col);
-    float thick = float(std::clamp(opts.scope_thickness, 1u, 10u)) * unit;
-    float arm = radius * 0.9f;
-
-    switch (opts.scope_style) {
-        case 1:  // COD 2: simple thin cross
-            WriteSegment(v, c, cx - arm, cy, cx + arm, cy, thick, col);
-            WriteSegment(v, c, cx, cy - arm, cx, cy + arm, thick, col);
-            break;
-        case 2: {  // COD 3: mil-dot
-            WriteSegment(v, c, cx - arm, cy, cx + arm, cy, thick, col);
-            WriteSegment(v, c, cx, cy - arm, cx, cy + arm, thick, col);
-            float dot_sz = thick * 1.8f;
-            for (int i = 1; i <= 4; i++) {
-                float d = radius * 0.2f * float(i);
-                WriteSegment(v, c, cx + d - dot_sz * 0.5f, cy, cx + d + dot_sz * 0.5f, cy, dot_sz, col);
-                WriteSegment(v, c, cx - d - dot_sz * 0.5f, cy, cx - d + dot_sz * 0.5f, cy, dot_sz, col);
-                WriteSegment(v, c, cx, cy + d - dot_sz * 0.5f, cx, cy + d + dot_sz * 0.5f, dot_sz, col);
-                WriteSegment(v, c, cx, cy - d - dot_sz * 0.5f, cx, cy - d + dot_sz * 0.5f, dot_sz, col);
-            }
-            break;
-        }
-        case 3: {  // MODERN: thick cross with center dot
-            float thick_m = thick * 1.5f;
-            WriteSegment(v, c, cx - arm, cy, cx + arm, cy, thick_m, col);
-            WriteSegment(v, c, cx, cy - arm, cx, cy + arm, thick_m, col);
-            float dot = thick * 3.0f;
-            WriteSegment(v, c, cx - dot * 0.5f, cy, cx + dot * 0.5f, cy, dot, col);
-            break;
-        }
-        case 4:  // PSO-1: cross with rangefinder chevrons below center
-            WriteSegment(v, c, cx - arm, cy, cx + arm, cy, thick, col);
-            WriteSegment(v, c, cx, cy - arm, cx, cy + arm, thick, col);
-            for (int i = 1; i <= 4; i++) {
-                float y = cy + radius * 0.15f * float(i);
-                float w = thick * (2.0f + float(i));
-                WriteSegment(v, c, cx - w, y, cx + w, y, thick, col);
-            }
-            break;
-        default:
-            break;
-    }
-}
-
-// Combined overlay draw (scope + crosshair) in a single triangle batch.
-void DrawOverlays(X86Context& ctx, float unit) {
-    const game::Options& opts = game::Opt();
-    bool scope_on = IsScoped(opts);
-    bool crosshair_on = opts.crosshair && !scope_on;
-    if (!scope_on && !crosshair_on) return;
-
-    uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
-    float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
-    float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
-    float cx = vx + vw * 0.5f;
-    float cy = vy + vh * 0.5f;
-
-    static const uint32_t buffer = mem::AllocSystem(kCombinedOverlayVerts * sizeof(Vertex), 16);
-    static const uint32_t offset = mem::AllocSystem(8, 16);
-    static const uint32_t colours = mem::AllocSystem(kCombinedOverlayVerts * sizeof(float) * 4, 16);
-
-    Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
-    Vertex* v = first;
-    uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
-
-    if (scope_on) DrawScopeSegments(v, c, vx, vy, vw, vh, unit);
-    else if (crosshair_on) DrawCrosshairSegments(v, c, cx, cy, unit);
-
-    if (v == first) return;
-    W32(offset, 0);
-    W32(offset + 4, 0);
-    uint32_t eax = ctx.eax, ecx = ctx.ecx;
-    ctx.eax = uint32_t(v - first) / 3;
-    ctx.ecx = buffer;
-    CallGuest(ctx, kTriangles, {offset, colours});
-    ctx.eax = eax;
-    ctx.ecx = ecx;
 }
 
 }  // namespace
@@ -437,8 +359,6 @@ void Aimbot(X86Context& ctx) {
     G<float>(c + kControllerPitch) += pitch * pull;
 }
 
-// Kept as a thin wrapper for backwards compatibility — DrawEsp calls DrawOverlays,
-// which handles both scope and crosshair. Direct calls to DrawCrosshair still work.
 void DrawCrosshair(X86Context& ctx, float unit) {
     const game::Options& opts = Opt();
     if (!opts.crosshair || !R32(kWorld)) return;
@@ -447,9 +367,9 @@ void DrawCrosshair(X86Context& ctx, float unit) {
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
     float cx = vx + vw * 0.5f;
     float cy = vy + vh * 0.5f;
-    static const uint32_t buffer = mem::AllocSystem(64 * sizeof(Vertex), 16);
+    static const uint32_t buffer = mem::AllocSystem(kCrosshairMaxVerts * sizeof(Vertex), 16);
     static const uint32_t offset = mem::AllocSystem(8, 16);
-    static const uint32_t colours = mem::AllocSystem(64 * sizeof(float) * 4, 16);
+    static const uint32_t colours = mem::AllocSystem(kCrosshairMaxVerts * sizeof(float) * 4, 16);
     Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
     Vertex* v = first;
     uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
@@ -467,43 +387,44 @@ void DrawCrosshair(X86Context& ctx, float unit) {
 
 void DrawEsp(X86Context& ctx, float unit) {
     const game::Options& opts = Opt();
-    DrawOverlays(ctx, unit);  // scope + crosshair (independent of the ESP master toggle)
+    // crosshair draws first, before the ESP guard: independent of the ESP master toggle
+    if (opts.crosshair) DrawCrosshair(ctx, unit);
     if (!opts.esp || !g_camera || !R32(kWorld)) return;
     uint32_t viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float vx = float(R32(viewport)), vy = float(R32(viewport + 4));
     float vw = float(R32(viewport + 8)), vh = float(R32(viewport + 12));
     // the vertex buffer, its call offset, and the per-vertex colour array: 16 bytes (4 floats) for each of
-    // the kMaxVertices vertices. Colours are written per-vertex as vertices are emitted, so the health bar
-    // can use its own green/yellow/red palette while the line and the bar's background keep the user's
-    // ESP colour.
+    // the kMaxVertices vertices. Colours are written per-vertex as vertices are emitted.
     static const uint32_t buffer = mem::AllocSystem(kMaxVertices * sizeof(Vertex), 16);
     static const uint32_t offset = mem::AllocSystem(8, 16);
     static const uint32_t colours = mem::AllocSystem(kMaxVertices * sizeof(float) * 4, 16);
     float espColour[4];
     CurrentColour(espColour);
 
+    // the player's world position, for the distance display
+    uint32_t me = R32(kWorld) + kWorldPlayer;
+    const float* myPos = &G<float>(me + kCharPosition);
+
     Vertex* first = static_cast<Vertex*>(HostPtr(buffer));
     Vertex* v = first;
     uint8_t* c = static_cast<uint8_t*>(HostPtr(colours));
     float width = kThickness * unit;
     auto now = std::chrono::steady_clock::now();
-    // the display mode: bit 0 = line, bit 1 = health bar (mask to 2 bits so an old config with 4-7 still
-    // decodes to the same visible elements rather than to garbage)
     uint32_t display = opts.esp_display & 0x3;
     bool show_line = (display & 1) != 0;
     bool show_health = (display & 2) != 0;
+    bool show_distance = opts.esp_distance;
     size_t kept = 0;
     for (size_t i = 0; i < g_count; i++) {
         uint32_t who = g_seen[i].who;
         if (now - g_seen[i].at > kSeen || R32(who + kCharKind) != kEnemyKind || R32(who + kCharDying)) continue;
         g_seen[kept++] = g_seen[i];
-        if (!show_line && !show_health) continue;
+        if (!show_line && !show_health && !show_distance) continue;
         const float* at = &G<float>(who + kCharPosition);
         float feet[3] = {at[0], at[1], at[2]};
         float head[3] = {at[0], at[1] + kHeight, at[2]};
         float f[2], h[2];
         if (!Project(feet, vx, vy, vw, vh, f) || !Project(head, vx, vy, vw, vh, h)) continue;
-        // the box width in screen space — used to size the health bar consistently across distances
         float full_h_screen = f[1] - h[1];
         float char_width_screen = full_h_screen * kBoxWidth;
         float half = char_width_screen * 0.5f;
@@ -511,9 +432,11 @@ void DrawEsp(X86Context& ctx, float unit) {
         if (show_line) {
             WriteSegment(v, c, vx + vw * 0.5f, vy + vh, f[0], f[1], width, espColour);
         }
+        float barY = 0.0f;
+        float barHeight = 0.0f;
         if (show_health) {
-            float barHeight = full_h_screen * 0.08f;
-            float barY = h[1] - barHeight - full_h_screen * 0.02f;
+            barHeight = full_h_screen * 0.08f;
+            barY = h[1] - barHeight - full_h_screen * 0.02f;
             float barLeft = left;
             float barRight = right;
             float barWidth = barRight - barLeft;
@@ -529,6 +452,31 @@ void DrawEsp(X86Context& ctx, float unit) {
                 float fillRight = barLeft + barWidth * ratio;
                 WriteSegment(v, c, barLeft, barY, fillRight, barY, barHeight, healthFill);
             }
+        }
+        if (show_distance) {
+            // Compute the enemy's 3D distance from the player in world units (metres).
+            float dx = at[0] - myPos[0];
+            float dy = at[1] - myPos[1];
+            float dz = at[2] - myPos[2];
+            int dist = int(std::sqrt(dx * dx + dy * dy + dz * dz) + 0.5f);
+            if (dist < 0) dist = 0;
+            if (dist > 999) dist = 999;
+
+            // Digit cell size scales with the enemy's on-screen height, clamped so very close and very
+            // far enemies both stay legible.
+            float num_h = std::clamp(full_h_screen * 0.10f, 6.0f * unit, 32.0f * unit);
+            float num_w = num_h * 0.55f;
+            float thick_n = std::max(num_h * 0.12f, 1.0f * unit);
+
+            // Bottom of the number: above the health bar if shown, else just above the head.
+            float bottom_y;
+            if (show_health) {
+                bottom_y = barY - barHeight * 0.5f - num_h * 0.15f;
+            } else {
+                bottom_y = h[1] - num_h * 0.15f;
+            }
+
+            DrawNumber(v, c, f[0], bottom_y, num_w, num_h, dist, thick_n, espColour);
         }
     }
     g_count = kept;
